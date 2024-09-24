@@ -15,8 +15,10 @@ type ResourceStep struct {
 }
 
 type SidecarConfig struct {
-	ErrCodes []string       `json:"err_codes"`
-	Steps    []ResourceStep `json:"steps"`
+	ErrCodes         []string       `json:"err_codes"`
+	Steps            []ResourceStep `json:"steps"`
+	CPUAnnotationKey string         `json:"cpu_annotation_key"`
+	MemAnnotationKey string         `json:"mem_annotation_key"`
 }
 
 type Config struct {
@@ -35,4 +37,12 @@ func Parse(configFilePath string) (Config, error) {
 		return config, fmt.Errorf("json parsing error for config in path %s: %w", configFilePath, err)
 	}
 	return config, nil
+}
+
+func (c Config) GetSidecarNames() []string {
+	var names []string
+	for name, _ := range c.Sidecars {
+		names = append(names, name)
+	}
+	return names
 }

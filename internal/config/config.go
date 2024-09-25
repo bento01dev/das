@@ -15,7 +15,8 @@ type ResourceStep struct {
 }
 
 type SidecarConfig struct {
-	ErrCodes         []string       `json:"err_codes"`
+	ErrCodes         []int          `json:"err_codes"`
+	Owner            string         `json:"owner"`
 	Steps            []ResourceStep `json:"steps"`
 	CPUAnnotationKey string         `json:"cpu_annotation_key"`
 	MemAnnotationKey string         `json:"mem_annotation_key"`
@@ -26,6 +27,7 @@ type Config struct {
 	Sidecars map[string]SidecarConfig `json:"sidecars"`
 }
 
+// TODO: need to add cue validation
 func Parse(configFilePath string) (Config, error) {
 	var config Config
 	f, err := os.Open(configFilePath)

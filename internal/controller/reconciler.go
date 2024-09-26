@@ -67,10 +67,10 @@ func (r *PodReconciler) getOwnerDetails(pod *corev1.Pod) map[config.Owner]podOwn
 		switch kind {
 		case config.Deployment:
 			owner = config.Deployment
-		case config.Pod:
-			owner = config.Pod
 		case config.ReplicaSet:
 			owner = config.ReplicaSet
+		case config.DaemonSet:
+			owner = config.DaemonSet
 		}
 		if owner == "" {
 			continue
@@ -120,8 +120,8 @@ func (r *PodReconciler) updateOwners(groupedDetails map[config.Owner][]container
 		switch owner {
 		case config.Deployment:
 			err = r.updateDeployment(details, ownerDetails)
-		case config.Pod:
-			err = r.updatePod(details, ownerDetails)
+		case config.DaemonSet:
+			err = r.updateDaemonSet(details, ownerDetails)
 		}
 	}
 	return err
@@ -133,7 +133,7 @@ func (r *PodReconciler) updateDeployment(details []containerDetail, ownerDetails
 	return err
 }
 
-func (r *PodReconciler) updatePod(details []containerDetail, ownerDetails map[config.Owner]podOwnerDetail) error {
+func (r *PodReconciler) updateDaemonSet(details []containerDetail, ownerDetails map[config.Owner]podOwnerDetail) error {
 	var err error
 	return err
 }

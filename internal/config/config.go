@@ -10,7 +10,7 @@ type Owner string
 
 func (o Owner) MarshalText() ([]byte, error) {
 	switch o {
-	case Deployment, ReplicaSet, Pod, DaemonSet:
+	case Deployment, ReplicaSet, DaemonSet:
 		return []byte(o), nil
 	default:
 		return nil, fmt.Errorf("unknown type: %v", o)
@@ -26,9 +26,6 @@ func (o *Owner) UnmarshalText(data []byte) error {
 	case string(ReplicaSet):
 		*o = ReplicaSet
 		return nil
-	case string(Pod):
-		*o = Pod
-		return nil
 	case string(DaemonSet):
 		*o = DaemonSet
 		return nil
@@ -40,7 +37,6 @@ func (o *Owner) UnmarshalText(data []byte) error {
 const (
 	Deployment Owner = "Deployment"
 	ReplicaSet Owner = "ReplicaSet"
-	Pod        Owner = "Pod"
 	DaemonSet  Owner = "DaemonSet"
 )
 

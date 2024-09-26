@@ -6,6 +6,44 @@ import (
 	"os"
 )
 
+type Owner string
+
+func (o Owner) MarshalText() ([]byte, error) {
+	switch o {
+	case Deployment, ReplicaSet, Pod, DaemonSet:
+		return []byte(o), nil
+	default:
+		return nil, fmt.Errorf("unknown type: %v", o)
+	}
+}
+
+func (o *Owner) UnmarshalText(data []byte) error {
+	s := string(data)
+	switch s {
+	case string(Deployment):
+		*o = Deployment
+		return nil
+	case string(ReplicaSet):
+		*o = ReplicaSet
+		return nil
+	case string(Pod):
+		*o = Pod
+		return nil
+	case string(DaemonSet):
+		*o = DaemonSet
+		return nil
+	default:
+		return fmt.Errorf("unknown type: %s", s)
+	}
+}
+
+const (
+	Deployment Owner = "Deployment"
+	ReplicaSet Owner = "ReplicaSet"
+	Pod        Owner = "Pod"
+	DaemonSet  Owner = "DaemonSet"
+)
+
 type ResourceStep struct {
 	RestartLimit int    `json:"restart_limit"`
 	CPURequest   string `json:"cpu_request"`
@@ -16,7 +54,7 @@ type ResourceStep struct {
 
 type SidecarConfig struct {
 	ErrCodes         []int          `json:"err_codes"`
-	Owner            string         `json:"owner"`
+	Owner            Owner          `json:"owner"`
 	Steps            []ResourceStep `json:"steps"`
 	CPUAnnotationKey string         `json:"cpu_annotation_key"`
 	MemAnnotationKey string         `json:"mem_annotation_key"`
@@ -27,7 +65,7 @@ type Config struct {
 	Sidecars map[string]SidecarConfig `json:"sidecars"`
 }
 
-// TODO: need to add cue validation
+// TODO: add cue validation if needed
 func Parse(configFilePath string) (Config, error) {
 	var config Config
 	f, err := os.Open(configFilePath)

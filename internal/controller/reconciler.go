@@ -16,6 +16,11 @@ type containerDetail struct {
 	containerStatus corev1.ContainerStatus
 }
 
+type podOwnerDetail struct {
+	Namespace string
+	Name      string
+}
+
 type PodReconciler struct {
 	client.Client
 	conf config.Config
@@ -42,11 +47,37 @@ func (r *PodReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	// pod.OwnerReferences[0].Name
 	// pod.Status.ContainerStatuses[0].State.Terminated
 	// pod.Status.ContainerStatuses[0].State.Terminated.ContainerID
+	ownerDetails := r.getOwnerDetails(pod)
 	details := r.matchDetails(pod)
-	details = r.filterTerminating(details)
+	details = r.filterTerminated(details)
 	groupedDetails := r.groupByOwner(details)
+	err = r.updateOwners(groupedDetails, ownerDetails)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
 	fmt.Println("matched details:", details)
 	return ctrl.Result{}, nil
+}
+
+func (r *PodReconciler) getOwnerDetails(pod *corev1.Pod) map[config.Owner]podOwnerDetail {
+	var res = make(map[config.Owner]podOwnerDetail)
+	for _, ownerRef := range pod.OwnerReferences {
+		var owner config.Owner
+		kind := config.Owner(ownerRef.Kind)
+		switch kind {
+		case config.Deployment:
+			owner = config.Deployment
+		case config.Pod:
+			owner = config.Pod
+		case config.ReplicaSet:
+			owner = config.ReplicaSet
+		}
+		if owner == "" {
+			continue
+		}
+		res[owner] = podOwnerDetail{Namespace: pod.Namespace, Name: ownerRef.Name}
+	}
+	return res
 }
 
 func (r *PodReconciler) matchDetails(pod *corev1.Pod) []containerDetail {
@@ -62,22 +93,47 @@ func (r *PodReconciler) matchDetails(pod *corev1.Pod) []containerDetail {
 	return res
 }
 
-func (r *PodReconciler) filterTerminating(details []containerDetail) []containerDetail {
+func (r *PodReconciler) filterTerminated(details []containerDetail) []containerDetail {
 	var filtered []containerDetail
 	for _, detail := range details {
-		if detail.containerStatus.State.Terminated != nil && slices.Contains(detail.sidecarConfig.ErrCodes, int(detail.containerStatus.State.Terminated.ExitCode)) {
+		if detail.containerStatus.State.Terminated != nil &&
+			slices.Contains(detail.sidecarConfig.ErrCodes, int(detail.containerStatus.State.Terminated.ExitCode)) {
 			filtered = append(filtered, detail)
 		}
 	}
 	return filtered
 }
 
-func (r *PodReconciler) groupByOwner(details []containerDetail) map[string][]containerDetail {
-	var res = make(map[string][]containerDetail)
+func (r *PodReconciler) groupByOwner(details []containerDetail) map[config.Owner][]containerDetail {
+	var res = make(map[config.Owner][]containerDetail)
 	for _, detail := range details {
 		mappedDetails := res[detail.sidecarConfig.Owner]
 		mappedDetails = append(mappedDetails, detail)
 		res[detail.sidecarConfig.Owner] = mappedDetails
 	}
 	return res
+}
+
+func (r *PodReconciler) updateOwners(groupedDetails map[config.Owner][]containerDetail, ownerDetails map[config.Owner]podOwnerDetail) error {
+	var err error
+	for owner, details := range groupedDetails {
+		switch owner {
+		case config.Deployment:
+			err = r.updateDeployment(details, ownerDetails)
+		case config.Pod:
+			err = r.updatePod(details, ownerDetails)
+		}
+	}
+	return err
+}
+
+func (r *PodReconciler) updateDeployment(details []containerDetail, ownerDetails map[config.Owner]podOwnerDetail) error {
+	var err error
+
+	return err
+}
+
+func (r *PodReconciler) updatePod(details []containerDetail, ownerDetails map[config.Owner]podOwnerDetail) error {
+	var err error
+	return err
 }

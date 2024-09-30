@@ -2,11 +2,15 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 
 	"github.com/bento01dev/das/internal/config"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -51,7 +55,7 @@ func (r *PodReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	details := r.matchDetails(pod)
 	details = r.filterTerminated(details)
 	groupedDetails := r.groupByOwner(details)
-	err = r.updateOwners(groupedDetails, ownerDetails)
+	err = r.updateOwners(ctx, groupedDetails, ownerDetails)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -59,8 +63,8 @@ func (r *PodReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	return ctrl.Result{}, nil
 }
 
-func (r *PodReconciler) getOwnerDetails(pod *corev1.Pod) map[config.Owner]podOwnerDetail {
-	var res = make(map[config.Owner]podOwnerDetail)
+func (r *PodReconciler) getOwnerDetails(pod *corev1.Pod) map[config.Owner]types.NamespacedName {
+	var res = make(map[config.Owner]types.NamespacedName)
 	for _, ownerRef := range pod.OwnerReferences {
 		var owner config.Owner
 		kind := config.Owner(ownerRef.Kind)
@@ -75,7 +79,7 @@ func (r *PodReconciler) getOwnerDetails(pod *corev1.Pod) map[config.Owner]podOwn
 		if owner == "" {
 			continue
 		}
-		res[owner] = podOwnerDetail{Namespace: pod.Namespace, Name: ownerRef.Name}
+		res[owner] = types.NamespacedName{Namespace: pod.Namespace, Name: ownerRef.Name}
 	}
 	return res
 }
@@ -114,26 +118,99 @@ func (r *PodReconciler) groupByOwner(details []containerDetail) map[config.Owner
 	return res
 }
 
-func (r *PodReconciler) updateOwners(groupedDetails map[config.Owner][]containerDetail, ownerDetails map[config.Owner]podOwnerDetail) error {
+func (r *PodReconciler) updateOwners(ctx context.Context, groupedDetails map[config.Owner][]containerDetail, ownerNamespacedNames map[config.Owner]types.NamespacedName) error {
 	var err error
 	for owner, details := range groupedDetails {
 		switch owner {
 		case config.Deployment:
-			err = r.updateDeployment(details, ownerDetails)
+			err = r.updateDeployment(ctx, details, ownerNamespacedNames)
 		case config.DaemonSet:
-			err = r.updateDaemonSet(details, ownerDetails)
+			err = r.updateDaemonSet(ctx, details, ownerNamespacedNames)
 		}
 	}
 	return err
 }
 
-func (r *PodReconciler) updateDeployment(details []containerDetail, ownerDetails map[config.Owner]podOwnerDetail) error {
+func (r *PodReconciler) updateDeployment(ctx context.Context, details []containerDetail, ownerNamespacedNames map[config.Owner]types.NamespacedName) error {
 	var err error
+	replicaNamespacedName, ok := ownerNamespacedNames[config.ReplicaSet]
+	if !ok {
+		return errors.New("replica set detail not found in map")
+	}
+	var replicaSet appsv1.ReplicaSet
+	err = r.Get(ctx, replicaNamespacedName, &replicaSet)
+	if err != nil {
+		return fmt.Errorf("error in retrieving replica set as owner of pod: %w", err)
+	}
+	var deploymentNamespacedName types.NamespacedName
+	for _, owner := range replicaSet.OwnerReferences {
+		if config.Owner(owner.Kind) == config.Deployment {
+			deploymentNamespacedName = types.NamespacedName{Namespace: replicaNamespacedName.Namespace, Name: owner.Name}
+			break
+		}
+	}
+	var deployment appsv1.Deployment
+	err = r.Get(ctx, deploymentNamespacedName, &deployment)
+	if err != nil {
+		return err
+	}
+	var dasDetails map[string]int
+	dasDetailsStr, ok := deployment.ObjectMeta.Annotations["das"]
+	if !ok {
+		for _, d := range details {
+			dasDetails[d.containerStatus.Name] = 1
+		}
+		marshalledDetails, err := json.Marshal(dasDetails)
+		if err != nil {
+			return fmt.Errorf("error marshalling json for %v: %w", dasDetails, err)
+		}
+		annotations := deployment.ObjectMeta.Annotations
+		annotations["das"] = string(marshalledDetails)
+		deployment.ObjectMeta.SetAnnotations(annotations)
+		if err := r.Update(ctx, &deployment); err != nil {
+			return fmt.Errorf("error in updating annotations for fresh restart count: %w", err)
+		}
+		return nil
+	}
+
+	if err := json.Unmarshal([]byte(dasDetailsStr), &dasDetails); err != nil {
+		return fmt.Errorf("error parsing das details in %s: %w", deployment.Name, err)
+	}
+	//compare das deatils with container details to check which ones are above restart count.
+	//for the containers that have exceeded restart count, get the current resource limits value and
+	//determine the next step value. update restart count to 0 for these containers as well
+	//update deployment yaml
+	//update s3 bucket.
+	for _, d := range details {
+		count, ok := dasDetails[d.containerStatus.Name]
+		if !ok {
+            dasDetails[d.containerStatus.Name] = 1
+            continue
+		}
+        count = count + 1
+        // currentStep := getCurrentStep(d.sidecarConfig, deployment.Spec.Template)
+	}
 
 	return err
 }
 
-func (r *PodReconciler) updateDaemonSet(details []containerDetail, ownerDetails map[config.Owner]podOwnerDetail) error {
+func getCurrentStep(sidecarConfig config.SidecarConfig, spec corev1.PodTemplateSpec) config.ResourceStep {
+    var res config.ResourceStep
+
+    currentCPUReq := spec.ObjectMeta.Annotations[sidecarConfig.CPULimitAnnotationKey]
+    currentMemReq := spec.ObjectMeta.Annotations[sidecarConfig.MemLimitAnnotationKey]
+    currentCPU := spec.ObjectMeta.Annotations[sidecarConfig.CPUAnnotationKey]
+    currentMem := spec.ObjectMeta.Annotations[sidecarConfig.MemAnnotationKey]
+    for _, step := range sidecarConfig.Steps {
+        if step.CPURequest == currentCPUReq && step.CPULimit == currentCPU && step.MemRequest == currentMemReq && step.MemLimit == currentMem {
+            res = step
+            break
+        }
+    }
+    return res
+}
+
+func (r *PodReconciler) updateDaemonSet(ctx context.Context, details []containerDetail, ownerDetails map[config.Owner]types.NamespacedName) error {
 	var err error
 	return err
 }

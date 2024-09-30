@@ -49,11 +49,13 @@ type ResourceStep struct {
 }
 
 type SidecarConfig struct {
-	ErrCodes         []int          `json:"err_codes"`
-	Owner            Owner          `json:"owner"`
-	Steps            []ResourceStep `json:"steps"`
-	CPUAnnotationKey string         `json:"cpu_annotation_key"`
-	MemAnnotationKey string         `json:"mem_annotation_key"`
+	ErrCodes              []int          `json:"err_codes"`
+	Owner                 Owner          `json:"owner"`
+	Steps                 []ResourceStep `json:"steps"`
+	CPUAnnotationKey      string         `json:"cpu_annotation_key"`
+	CPULimitAnnotationKey string         `json:"cpu_limit_annotation_key"`
+	MemAnnotationKey      string         `json:"mem_annotation_key"`
+	MemLimitAnnotationKey string         `json:"mem_limit_annotation_key"`
 }
 
 type Config struct {

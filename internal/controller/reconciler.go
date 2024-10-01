@@ -159,34 +159,51 @@ func (r *PodReconciler) updateDeployment(ctx context.Context, details []containe
 	if err != nil {
 		return err
 	}
+	currentOwnerAnnotations := deployment.ObjectMeta.Annotations
+	currentPodAnnotations := deployment.Spec.Template.Annotations
+	ownerAnnotations, podAnnotations, err := newAnnotations(details, currentOwnerAnnotations, currentPodAnnotations)
+	if err != nil {
+        return fmt.Errorf("error in updating annotations for %s in %s: %w", deployment.Name, deployment.Namespace, err)
+	}
+	deployment.ObjectMeta.Annotations = ownerAnnotations
+	deployment.Spec.Template.Annotations = podAnnotations
+
+	err = r.Update(ctx, &deployment)
+	if err != nil {
+		return fmt.Errorf("error updating deployment with the new annotations for %s: %w", deployment.Name, err)
+	}
+
+	return err
+}
+
+func newAnnotations(details []containerDetail, currentOwnerAnnotations map[string]string, currentPodAnnotations map[string]string) (ownerAnnotations map[string]string, podAnnotations map[string]string, err error) {
+	ownerAnnotations = currentOwnerAnnotations
+	podAnnotations = currentPodAnnotations
 	var dasDetails map[string]dasDetail
-	dasDetailsStr, ok := deployment.ObjectMeta.Annotations["das/details"]
+	var marshalledDetails []byte
+	dasDetailsStr, ok := currentOwnerAnnotations["das/details"]
 	if !ok {
 		for _, d := range details {
 			dasDetails[d.containerStatus.Name] = dasDetail{Name: d.sidecarConfig.Steps[0].Name, RestartCount: 1}
 		}
-		marshalledDetails, err := json.Marshal(dasDetails)
+		marshalledDetails, err = json.Marshal(dasDetails)
 		if err != nil {
-			return fmt.Errorf("error marshalling json for %v: %w", dasDetails, err)
+			err = fmt.Errorf("error marshalling json for %v: %w", dasDetails, err)
+			return
 		}
-		annotations := deployment.ObjectMeta.Annotations
-		annotations["das"] = string(marshalledDetails)
-		deployment.ObjectMeta.SetAnnotations(annotations)
-		if err := r.Update(ctx, &deployment); err != nil {
-			return fmt.Errorf("error in updating annotations for fresh restart count: %w", err)
-		}
-		return nil
+		ownerAnnotations["das/details"] = string(marshalledDetails)
+		return
 	}
 
-	if err := json.Unmarshal([]byte(dasDetailsStr), &dasDetails); err != nil {
-		return fmt.Errorf("error parsing das details in %s: %w", deployment.Name, err)
+	if unmarshalErr := json.Unmarshal([]byte(dasDetailsStr), &dasDetails); unmarshalErr != nil {
+		err = fmt.Errorf("error parsing das details in %w", unmarshalErr)
+		return
 	}
 	//compare das deatils with container details to check which ones are above restart count.
 	//for the containers that have exceeded restart count, get the current resource limits value and
 	//determine the next step value. update restart count to 0 for these containers as well
 	//update deployment yaml
 	//update s3 bucket.
-	podAnnotations := deployment.Spec.Template.Annotations
 	for _, d := range details {
 		restartDetail, ok := dasDetails[d.containerStatus.Name]
 		if !ok {
@@ -206,21 +223,14 @@ func (r *PodReconciler) updateDeployment(ctx context.Context, details []containe
 		podAnnotations[d.sidecarConfig.MemLimitAnnotationKey] = currentStep.MemLimit
 	}
 
-	newDasDetails, err := json.Marshal(dasDetails)
-	if err != nil {
-		return fmt.Errorf("Error in marshalling the new das details after determining next step: %w", err)
+	newDasDetails, marshalErr := json.Marshal(dasDetails)
+	if marshalErr != nil {
+		err = fmt.Errorf("Error in marshalling the new das details after determining next step: %w", marshalErr)
+		return
 	}
 
-	deploymentAnnotations := deployment.ObjectMeta.Annotations
-	deploymentAnnotations["das/details"] = string(newDasDetails)
-	deployment.Spec.Template.Annotations = podAnnotations
-
-	err = r.Update(ctx, &deployment)
-	if err != nil {
-		return fmt.Errorf("error updating deployment with the new annotations for %s: %w", deployment.Name, err)
-	}
-
-	return err
+	ownerAnnotations["das/details"] = string(newDasDetails)
+	return
 }
 
 func getCurrentStep(sidecarConfig config.SidecarConfig, stepName string) config.ResourceStep {
@@ -247,5 +257,28 @@ func getNextStep(sidecarConfig config.SidecarConfig, currentStep string) int {
 
 func (r *PodReconciler) updateDaemonSet(ctx context.Context, details []containerDetail, ownerDetails map[config.Owner]types.NamespacedName) error {
 	var err error
+	daemonSetNamespacedName, ok := ownerDetails[config.DaemonSet]
+	if !ok {
+		return errors.New("daemon set namespaced name not found in owner details")
+	}
+	var daemonSet appsv1.DaemonSet
+	err = r.Get(ctx, daemonSetNamespacedName, &daemonSet)
+	if err != nil {
+		return fmt.Errorf("error in retrieving daemon set details for %v: %w", daemonSetNamespacedName, err)
+	}
+	currentOwnerAnnotations := daemonSet.ObjectMeta.Annotations
+	currentPodAnnotations := daemonSet.Spec.Template.Annotations
+	ownerAnnotations, podAnnotations, err := newAnnotations(details, currentOwnerAnnotations, currentPodAnnotations)
+	if err != nil {
+        return fmt.Errorf("error in updating annotations for %s in %s: %w", daemonSet.Name, daemonSet.Namespace, err)
+	}
+	daemonSet.ObjectMeta.Annotations = ownerAnnotations
+	daemonSet.Spec.Template.Annotations = podAnnotations
+
+	err = r.Update(ctx, &daemonSet)
+	if err != nil {
+		return fmt.Errorf("error updating deployment with the new annotations for %s: %w", daemonSet.Name, err)
+	}
+
 	return err
 }

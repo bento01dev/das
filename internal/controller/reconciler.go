@@ -56,10 +56,10 @@ func (r *PodReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	// pod.OwnerReferences[0].Name
 	// pod.Status.ContainerStatuses[0].State.Terminated
 	// pod.Status.ContainerStatuses[0].State.Terminated.ContainerID
-	ownerDetails := r.getOwnerDetails(pod)
-	details := r.matchDetails(pod)
-	details = r.filterTerminated(details)
-	groupedDetails := r.groupByOwner(details)
+	ownerDetails := getOwnerDetails(pod)
+	details := matchDetails(pod, r.conf.Sidecars)
+	details = filterTerminated(details)
+	groupedDetails := groupByOwner(details)
 	err = r.updateOwners(ctx, groupedDetails, ownerDetails)
 	if err != nil {
 		return ctrl.Result{}, err
@@ -68,7 +68,7 @@ func (r *PodReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	return ctrl.Result{}, nil
 }
 
-func (r *PodReconciler) getOwnerDetails(pod *corev1.Pod) map[config.Owner]types.NamespacedName {
+func getOwnerDetails(pod *corev1.Pod) map[config.Owner]types.NamespacedName {
 	var res = make(map[config.Owner]types.NamespacedName)
 	for _, ownerRef := range pod.OwnerReferences {
 		var owner config.Owner
@@ -85,40 +85,6 @@ func (r *PodReconciler) getOwnerDetails(pod *corev1.Pod) map[config.Owner]types.
 			continue
 		}
 		res[owner] = types.NamespacedName{Namespace: pod.Namespace, Name: ownerRef.Name}
-	}
-	return res
-}
-
-func (r *PodReconciler) matchDetails(pod *corev1.Pod) []containerDetail {
-	var res []containerDetail
-	for _, name := range r.conf.GetSidecarNames() {
-		for _, containerStatus := range pod.Status.ContainerStatuses {
-			if name == containerStatus.Name {
-				sidecarConfig := r.conf.Sidecars[name]
-				res = append(res, containerDetail{sidecarConfig: sidecarConfig, containerStatus: containerStatus})
-			}
-		}
-	}
-	return res
-}
-
-func (r *PodReconciler) filterTerminated(details []containerDetail) []containerDetail {
-	var filtered []containerDetail
-	for _, detail := range details {
-		if detail.containerStatus.State.Terminated != nil &&
-			slices.Contains(detail.sidecarConfig.ErrCodes, int(detail.containerStatus.State.Terminated.ExitCode)) {
-			filtered = append(filtered, detail)
-		}
-	}
-	return filtered
-}
-
-func (r *PodReconciler) groupByOwner(details []containerDetail) map[config.Owner][]containerDetail {
-	var res = make(map[config.Owner][]containerDetail)
-	for _, detail := range details {
-		mappedDetails := res[detail.sidecarConfig.Owner]
-		mappedDetails = append(mappedDetails, detail)
-		res[detail.sidecarConfig.Owner] = mappedDetails
 	}
 	return res
 }
@@ -171,6 +137,34 @@ func (r *PodReconciler) updateDeployment(ctx context.Context, details []containe
 	err = r.Update(ctx, &deployment)
 	if err != nil {
 		return fmt.Errorf("error updating deployment with the new annotations for %s: %w", deployment.Name, err)
+	}
+
+	return err
+}
+
+func (r *PodReconciler) updateDaemonSet(ctx context.Context, details []containerDetail, ownerDetails map[config.Owner]types.NamespacedName) error {
+	var err error
+	daemonSetNamespacedName, ok := ownerDetails[config.DaemonSet]
+	if !ok {
+		return errors.New("daemon set namespaced name not found in owner details")
+	}
+	var daemonSet appsv1.DaemonSet
+	err = r.Get(ctx, daemonSetNamespacedName, &daemonSet)
+	if err != nil {
+		return fmt.Errorf("error in retrieving daemon set details for %v: %w", daemonSetNamespacedName, err)
+	}
+	currentOwnerAnnotations := daemonSet.ObjectMeta.Annotations
+	currentPodAnnotations := daemonSet.Spec.Template.Annotations
+	ownerAnnotations, podAnnotations, err := newAnnotations(details, currentOwnerAnnotations, currentPodAnnotations)
+	if err != nil {
+		return fmt.Errorf("error in updating annotations for %s in %s: %w", daemonSet.Name, daemonSet.Namespace, err)
+	}
+	daemonSet.ObjectMeta.Annotations = ownerAnnotations
+	daemonSet.Spec.Template.Annotations = podAnnotations
+
+	err = r.Update(ctx, &daemonSet)
+	if err != nil {
+		return fmt.Errorf("error updating deployment with the new annotations for %s: %w", daemonSet.Name, err)
 	}
 
 	return err
@@ -255,30 +249,35 @@ func getNextStep(sidecarConfig config.SidecarConfig, currentStep string) int {
 	return res
 }
 
-func (r *PodReconciler) updateDaemonSet(ctx context.Context, details []containerDetail, ownerDetails map[config.Owner]types.NamespacedName) error {
-	var err error
-	daemonSetNamespacedName, ok := ownerDetails[config.DaemonSet]
-	if !ok {
-		return errors.New("daemon set namespaced name not found in owner details")
+func matchDetails(pod *corev1.Pod, sidecars map[string]config.SidecarConfig) []containerDetail {
+	var res []containerDetail
+	for name, sidecarConfig := range sidecars {
+		for _, containerStatus := range pod.Status.ContainerStatuses {
+			if name == containerStatus.Name {
+				res = append(res, containerDetail{sidecarConfig: sidecarConfig, containerStatus: containerStatus})
+			}
+		}
 	}
-	var daemonSet appsv1.DaemonSet
-	err = r.Get(ctx, daemonSetNamespacedName, &daemonSet)
-	if err != nil {
-		return fmt.Errorf("error in retrieving daemon set details for %v: %w", daemonSetNamespacedName, err)
-	}
-	currentOwnerAnnotations := daemonSet.ObjectMeta.Annotations
-	currentPodAnnotations := daemonSet.Spec.Template.Annotations
-	ownerAnnotations, podAnnotations, err := newAnnotations(details, currentOwnerAnnotations, currentPodAnnotations)
-	if err != nil {
-		return fmt.Errorf("error in updating annotations for %s in %s: %w", daemonSet.Name, daemonSet.Namespace, err)
-	}
-	daemonSet.ObjectMeta.Annotations = ownerAnnotations
-	daemonSet.Spec.Template.Annotations = podAnnotations
+	return res
+}
 
-	err = r.Update(ctx, &daemonSet)
-	if err != nil {
-		return fmt.Errorf("error updating deployment with the new annotations for %s: %w", daemonSet.Name, err)
+func filterTerminated(details []containerDetail) []containerDetail {
+	var filtered []containerDetail
+	for _, detail := range details {
+		if detail.containerStatus.State.Terminated != nil &&
+			slices.Contains(detail.sidecarConfig.ErrCodes, int(detail.containerStatus.State.Terminated.ExitCode)) {
+			filtered = append(filtered, detail)
+		}
 	}
+	return filtered
+}
 
-	return err
+func groupByOwner(details []containerDetail) map[config.Owner][]containerDetail {
+	var res = make(map[config.Owner][]containerDetail)
+	for _, detail := range details {
+		mappedDetails := res[detail.sidecarConfig.Owner]
+		mappedDetails = append(mappedDetails, detail)
+		res[detail.sidecarConfig.Owner] = mappedDetails
+	}
+	return res
 }

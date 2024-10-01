@@ -77,11 +77,3 @@ func Parse(configFilePath string) (Config, error) {
 	}
 	return config, nil
 }
-
-func (c Config) GetSidecarNames() []string {
-	var names []string
-	for name, _ := range c.Sidecars {
-		names = append(names, name)
-	}
-	return names
-}

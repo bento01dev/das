@@ -41,6 +41,7 @@ const (
 )
 
 type ResourceStep struct {
+	Name         string `json:"name"`
 	RestartLimit int    `json:"restart_limit"`
 	CPURequest   string `json:"cpu_request"`
 	CPULimit     string `json:"cpu_limit"`

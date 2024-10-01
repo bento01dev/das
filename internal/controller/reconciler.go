@@ -25,6 +25,11 @@ type podOwnerDetail struct {
 	Name      string
 }
 
+type dasDetail struct {
+	Name         string `json:"name"`
+	RestartCount int    `json:"restart_count"`
+}
+
 type PodReconciler struct {
 	client.Client
 	conf config.Config
@@ -154,11 +159,11 @@ func (r *PodReconciler) updateDeployment(ctx context.Context, details []containe
 	if err != nil {
 		return err
 	}
-	var dasDetails map[string]int
-	dasDetailsStr, ok := deployment.ObjectMeta.Annotations["das"]
+	var dasDetails map[string]dasDetail
+	dasDetailsStr, ok := deployment.ObjectMeta.Annotations["das/details"]
 	if !ok {
 		for _, d := range details {
-			dasDetails[d.containerStatus.Name] = 1
+			dasDetails[d.containerStatus.Name] = dasDetail{Name: d.sidecarConfig.Steps[0].Name, RestartCount: 1}
 		}
 		marshalledDetails, err := json.Marshal(dasDetails)
 		if err != nil {
@@ -181,33 +186,63 @@ func (r *PodReconciler) updateDeployment(ctx context.Context, details []containe
 	//determine the next step value. update restart count to 0 for these containers as well
 	//update deployment yaml
 	//update s3 bucket.
+	podAnnotations := deployment.Spec.Template.Annotations
 	for _, d := range details {
-		count, ok := dasDetails[d.containerStatus.Name]
+		restartDetail, ok := dasDetails[d.containerStatus.Name]
 		if !ok {
-            dasDetails[d.containerStatus.Name] = 1
-            continue
+			dasDetails[d.containerStatus.Name] = dasDetail{Name: d.sidecarConfig.Steps[0].Name, RestartCount: 1}
+			continue
 		}
-        count = count + 1
-        // currentStep := getCurrentStep(d.sidecarConfig, deployment.Spec.Template)
+		currentStep := getCurrentStep(d.sidecarConfig, restartDetail.Name)
+		if restartDetail.RestartCount+1 < currentStep.RestartLimit {
+			dasDetails[d.containerStatus.Name] = dasDetail{Name: restartDetail.Name, RestartCount: restartDetail.RestartCount + 1}
+			continue
+		}
+		nextStep := d.sidecarConfig.Steps[getNextStep(d.sidecarConfig, restartDetail.Name)]
+		dasDetails[d.containerStatus.Name] = dasDetail{Name: nextStep.Name}
+		podAnnotations[d.sidecarConfig.CPUAnnotationKey] = currentStep.CPURequest
+		podAnnotations[d.sidecarConfig.CPULimitAnnotationKey] = currentStep.CPULimit
+		podAnnotations[d.sidecarConfig.MemAnnotationKey] = currentStep.MemRequest
+		podAnnotations[d.sidecarConfig.MemLimitAnnotationKey] = currentStep.MemLimit
+	}
+
+	newDasDetails, err := json.Marshal(dasDetails)
+	if err != nil {
+		return fmt.Errorf("Error in marshalling the new das details after determining next step: %w", err)
+	}
+
+	deploymentAnnotations := deployment.ObjectMeta.Annotations
+	deploymentAnnotations["das/details"] = string(newDasDetails)
+	deployment.Spec.Template.Annotations = podAnnotations
+
+	err = r.Update(ctx, &deployment)
+	if err != nil {
+		return fmt.Errorf("error updating deployment with the new annotations for %s: %w", deployment.Name, err)
 	}
 
 	return err
 }
 
-func getCurrentStep(sidecarConfig config.SidecarConfig, spec corev1.PodTemplateSpec) config.ResourceStep {
-    var res config.ResourceStep
+func getCurrentStep(sidecarConfig config.SidecarConfig, stepName string) config.ResourceStep {
+	var res config.ResourceStep
+	for _, step := range sidecarConfig.Steps {
+		if step.Name == stepName {
+			res = step
+			break
+		}
+	}
+	return res
+}
 
-    currentCPUReq := spec.ObjectMeta.Annotations[sidecarConfig.CPULimitAnnotationKey]
-    currentMemReq := spec.ObjectMeta.Annotations[sidecarConfig.MemLimitAnnotationKey]
-    currentCPU := spec.ObjectMeta.Annotations[sidecarConfig.CPUAnnotationKey]
-    currentMem := spec.ObjectMeta.Annotations[sidecarConfig.MemAnnotationKey]
-    for _, step := range sidecarConfig.Steps {
-        if step.CPURequest == currentCPUReq && step.CPULimit == currentCPU && step.MemRequest == currentMemReq && step.MemLimit == currentMem {
-            res = step
-            break
-        }
-    }
-    return res
+func getNextStep(sidecarConfig config.SidecarConfig, currentStep string) int {
+	var res = len(sidecarConfig.Steps)
+	for i, step := range sidecarConfig.Steps {
+		if step.Name == currentStep && i != len(sidecarConfig.Steps) {
+			res = i
+			break
+		}
+	}
+	return res
 }
 
 func (r *PodReconciler) updateDaemonSet(ctx context.Context, details []containerDetail, ownerDetails map[config.Owner]types.NamespacedName) error {

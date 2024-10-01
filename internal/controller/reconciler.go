@@ -238,7 +238,7 @@ func getNextStep(sidecarConfig config.SidecarConfig, currentStep string) int {
 	var res = len(sidecarConfig.Steps)
 	for i, step := range sidecarConfig.Steps {
 		if step.Name == currentStep && i != len(sidecarConfig.Steps) {
-			res = i
+			res = i + 1
 			break
 		}
 	}

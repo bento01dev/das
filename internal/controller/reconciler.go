@@ -163,7 +163,7 @@ func (r *PodReconciler) updateDeployment(ctx context.Context, details []containe
 	currentPodAnnotations := deployment.Spec.Template.Annotations
 	ownerAnnotations, podAnnotations, err := newAnnotations(details, currentOwnerAnnotations, currentPodAnnotations)
 	if err != nil {
-        return fmt.Errorf("error in updating annotations for %s in %s: %w", deployment.Name, deployment.Namespace, err)
+		return fmt.Errorf("error in updating annotations for %s in %s: %w", deployment.Name, deployment.Namespace, err)
 	}
 	deployment.ObjectMeta.Annotations = ownerAnnotations
 	deployment.Spec.Template.Annotations = podAnnotations
@@ -270,7 +270,7 @@ func (r *PodReconciler) updateDaemonSet(ctx context.Context, details []container
 	currentPodAnnotations := daemonSet.Spec.Template.Annotations
 	ownerAnnotations, podAnnotations, err := newAnnotations(details, currentOwnerAnnotations, currentPodAnnotations)
 	if err != nil {
-        return fmt.Errorf("error in updating annotations for %s in %s: %w", daemonSet.Name, daemonSet.Namespace, err)
+		return fmt.Errorf("error in updating annotations for %s in %s: %w", daemonSet.Name, daemonSet.Namespace, err)
 	}
 	daemonSet.ObjectMeta.Annotations = ownerAnnotations
 	daemonSet.Spec.Template.Annotations = podAnnotations

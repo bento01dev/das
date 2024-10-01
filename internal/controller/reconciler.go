@@ -59,9 +59,9 @@ func (r *PodReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	ownerDetails := getOwnerDetails(pod)
 	details := matchDetails(pod, r.conf.Sidecars)
 	details = filterTerminated(details)
-    if len(details) < 1 {
-        return ctrl.Result{}, nil
-    }
+	if len(details) < 1 {
+		return ctrl.Result{}, nil
+	}
 	groupedDetails := groupByOwner(details)
 	err = r.updateOwners(ctx, groupedDetails, ownerDetails)
 	if err != nil {

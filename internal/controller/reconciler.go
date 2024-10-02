@@ -231,17 +231,17 @@ func newAnnotations(details []containerDetail, currentOwnerAnnotations map[strin
 }
 
 func getCurrentStep(sidecarConfig config.SidecarConfig, stepName string) config.ResourceStep {
-    i := slices.IndexFunc(sidecarConfig.Steps, func(step config.ResourceStep) bool {
-        if step.Name == stepName {
-            return true
-        }
-        return false
-    })
+	i := slices.IndexFunc(sidecarConfig.Steps, func(step config.ResourceStep) bool {
+		if step.Name == stepName {
+			return true
+		}
+		return false
+	})
 
-    if i == -1 {
-        return config.ResourceStep{}
-    }
-    return sidecarConfig.Steps[i]
+	if i == -1 {
+		return config.ResourceStep{}
+	}
+	return sidecarConfig.Steps[i]
 
 	// for _, step := range sidecarConfig.Steps {
 	// 	if step.Name == stepName {
@@ -253,17 +253,17 @@ func getCurrentStep(sidecarConfig config.SidecarConfig, stepName string) config.
 }
 
 func getNextStep(sidecarConfig config.SidecarConfig, currentStep string) int {
-    res := slices.IndexFunc(sidecarConfig.Steps, func(step config.ResourceStep) bool {
-        if step.Name == currentStep {
-            return true
-        }
-        return false
-    })
+	res := slices.IndexFunc(sidecarConfig.Steps, func(step config.ResourceStep) bool {
+		if step.Name == currentStep {
+			return true
+		}
+		return false
+	})
 
-    if res == -1 || res == len(sidecarConfig.Steps) {
-        return len(sidecarConfig.Steps)
-    }
-    return res + 1
+	if res == -1 || res == len(sidecarConfig.Steps) {
+		return len(sidecarConfig.Steps)
+	}
+	return res + 1
 
 	// for i, step := range sidecarConfig.Steps {
 	// 	if step.Name == currentStep && i != len(sidecarConfig.Steps) {

@@ -231,25 +231,47 @@ func newAnnotations(details []containerDetail, currentOwnerAnnotations map[strin
 }
 
 func getCurrentStep(sidecarConfig config.SidecarConfig, stepName string) config.ResourceStep {
-	var res config.ResourceStep
-	for _, step := range sidecarConfig.Steps {
-		if step.Name == stepName {
-			res = step
-			break
-		}
-	}
-	return res
+    i := slices.IndexFunc(sidecarConfig.Steps, func(step config.ResourceStep) bool {
+        if step.Name == stepName {
+            return true
+        }
+        return false
+    })
+
+    if i == -1 {
+        return config.ResourceStep{}
+    }
+    return sidecarConfig.Steps[i]
+
+	// for _, step := range sidecarConfig.Steps {
+	// 	if step.Name == stepName {
+	// 		res = step
+	// 		break
+	// 	}
+	// }
+	// return res
 }
 
 func getNextStep(sidecarConfig config.SidecarConfig, currentStep string) int {
-	var res = len(sidecarConfig.Steps)
-	for i, step := range sidecarConfig.Steps {
-		if step.Name == currentStep && i != len(sidecarConfig.Steps) {
-			res = i + 1
-			break
-		}
-	}
-	return res
+    res := slices.IndexFunc(sidecarConfig.Steps, func(step config.ResourceStep) bool {
+        if step.Name == currentStep {
+            return true
+        }
+        return false
+    })
+
+    if res == -1 || res == len(sidecarConfig.Steps) {
+        return len(sidecarConfig.Steps)
+    }
+    return res + 1
+
+	// for i, step := range sidecarConfig.Steps {
+	// 	if step.Name == currentStep && i != len(sidecarConfig.Steps) {
+	// 		res = i + 1
+	// 		break
+	// 	}
+	// }
+	// return res
 }
 
 func matchDetails(pod *corev1.Pod, sidecars map[string]config.SidecarConfig) []containerDetail {

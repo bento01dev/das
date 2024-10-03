@@ -16,6 +16,7 @@ func Run() error {
 	fmt.Println("Reading config from:", configFilePath)
 	conf, err := config.Parse(configFilePath)
 	if err != nil {
+		fmt.Println("error parsing config:", err.Error())
 		return err
 	}
 	err = controller.Start(conf)

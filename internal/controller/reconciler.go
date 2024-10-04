@@ -50,24 +50,25 @@ func (r *PodReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	pod := &corev1.Pod{}
 	err := r.Get(ctx, req.NamespacedName, pod)
 	if err != nil {
-		fmt.Printf("error getting pod for %s: %v", req.NamespacedName, err)
+		fmt.Printf("error getting pod for %s: %v\n", req.NamespacedName, err)
 		return ctrl.Result{}, nil
 	}
 	// pod.OwnerReferences[0].Name
 	// pod.Status.ContainerStatuses[0].State.Terminated
 	// pod.Status.ContainerStatuses[0].State.Terminated.ContainerID
 	ownerDetails := getOwnerDetails(pod)
-	details := matchDetails(pod, r.conf.Sidecars)
-	details = filterTerminated(details)
-	if len(details) < 1 {
-		return ctrl.Result{}, nil
-	}
-	groupedDetails := groupByOwner(details)
-	err = r.updateOwners(ctx, groupedDetails, ownerDetails)
-	if err != nil {
-		return ctrl.Result{}, err
-	}
-	fmt.Println("matched details:", details)
+    fmt.Println("owner details:", ownerDetails)
+	// details := matchDetails(pod, r.conf.Sidecars)
+	// details = filterTerminated(details)
+	// if len(details) < 1 {
+	// 	return ctrl.Result{}, nil
+	// }
+	// groupedDetails := groupByOwner(details)
+	// err = r.updateOwners(ctx, groupedDetails, ownerDetails)
+	// if err != nil {
+	// 	return ctrl.Result{}, err
+	// }
+	// fmt.Println("matched details:", details)
 	return ctrl.Result{}, nil
 }
 

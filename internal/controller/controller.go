@@ -26,6 +26,7 @@ func Start(conf config.Config) error {
 		return fmt.Errorf("error in setting reconciler for pod: %w", err)
 	}
 
+	fmt.Println("starting manager..")
 	//TODO: need to pass custom context
 	return manager.Start(ctrl.SetupSignalHandler())
 }

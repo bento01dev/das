@@ -24,6 +24,18 @@ rules:
   - update
   - patch
 - apiGroups:
+  - "apps"
+  resources:
+  - deployments
+  - replicasets
+  - daemonsets
+  verbs:
+  - get
+  - list
+  - watch
+  - update
+  - patch
+- apiGroups:
   - ""
   resources:
   - events
@@ -70,25 +82,33 @@ data:
     {
       "s3_bucket": "test",
       "sidecars": {
-          "test_sidecar": {
+          "test-sidecar": {
             "err_codes": [
-              1
+              0
             ],
             "owner": "Deployment",
             "steps": [
               {
-                "name": "test_step_1",
-                "restart_limit": 2,
-                "cpu_request": "2",
-                "cpu_limit": "2",
+                "name": "test-step-1",
+                "restart_limit": 5,
+                "cpu_request": "1",
+                "cpu_limit": "1",
                 "mem_request": "1Gi",
                 "mem_limit": "1Gi"
+              },
+              {
+                "name": "test-step-2",
+                "restart_limit": 5,
+                "cpu_request": "2",
+                "cpu_limit": "2",
+                "mem_request": "2Gi",
+                "mem_limit": "2Gi"
               }
             ],
-          "cpu_annotation_key": "test_sidecar/cpu",
-          "cpu_limit_annotation_key": "test_sidecar/cpuLimit",
-          "mem_annotation_key": "test_sidecar/mem",
-          "mem_limit_annotation_key": "test_sidecar/memLimit"
+          "cpu_annotation_key": "test-sidecar/cpu",
+          "cpu_limit_annotation_key": "test-sidecar/cpuLimit",
+          "mem_annotation_key": "test-sidecar/mem",
+          "mem_limit_annotation_key": "test-sidecar/memLimit"
         }
       }
     }
@@ -113,7 +133,7 @@ spec:
       serviceAccountName: das
       containers:
       - name: das
-        image: das:0.6
+        image: das:0.33
         command: ["/das", "--config_file", "/config/config.json"]
         resources:
           limits:

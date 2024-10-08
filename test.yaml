@@ -31,8 +31,8 @@ spec:
     spec:
       serviceAccountName: test-http
       containers:
-      - name: test-http
-        image: strm/helloworld-http
+      - name: test-sidecar
+        image: test-sidecar:0.3
         resources:
           limits:
             cpu: "1"

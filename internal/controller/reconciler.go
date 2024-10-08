@@ -2,10 +2,8 @@ package controller
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"slices"
 
 	"github.com/bento01dev/das/internal/config"
 	appsv1 "k8s.io/api/apps/v1"
@@ -30,9 +28,28 @@ type dasDetail struct {
 	RestartCount int    `json:"restart_count"`
 }
 
+type modifier interface {
+	getOwnerDetails(pod *corev1.Pod) map[config.Owner]types.NamespacedName
+	getCurrentStep(sidecarConfig config.SidecarConfig, stepName string) config.ResourceStep
+	getNextStep(sidecarConfig config.SidecarConfig, currentStep string) int
+	matchDetails(pod *corev1.Pod) []containerDetail
+	filterTerminated(details []containerDetail) []containerDetail
+	groupByOwner(details []containerDetail) map[config.Owner][]containerDetail
+	newAnnotations(details []containerDetail, currentOwnerAnnotations map[string]string, currentPodAnnotations map[string]string) (ownerAnnotations map[string]string, podAnnotations map[string]string, err error)
+}
+
 type PodReconciler struct {
 	client.Client
-	conf config.Config
+	conf     config.Config
+	modifier modifier
+}
+
+func NewPodReconciler(c client.Client, conf config.Config, m modifier) *PodReconciler {
+	return &PodReconciler{
+		Client:   c,
+		conf:     conf,
+		modifier: m,
+	}
 }
 
 // on pod event, it should first get the containers and retrieve configs matching name
@@ -46,6 +63,7 @@ type PodReconciler struct {
 // update all resources (or single resource if multiple containers are having errors and tied to the same resource)
 // update should include resetting the count for the containers in meta data and updating the necessary annotation for the container
 // update S3 to the new limits for the container for the resource name
+// TODO: figure out operation failed. object updated error
 func (r *PodReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	pod := &corev1.Pod{}
 	err := r.Get(ctx, req.NamespacedName, pod)
@@ -53,39 +71,18 @@ func (r *PodReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 		fmt.Printf("error getting pod for %s: %v\n", req.NamespacedName, err)
 		return ctrl.Result{}, nil
 	}
-	ownerDetails := getOwnerDetails(pod)
-	details := matchDetails(pod, r.conf.Sidecars)
-	details = filterTerminated(details)
+	ownerDetails := r.modifier.getOwnerDetails(pod)
+	details := r.modifier.matchDetails(pod)
+	details = r.modifier.filterTerminated(details)
 	if len(details) < 1 {
 		return ctrl.Result{}, nil
 	}
-	groupedDetails := groupByOwner(details)
+	groupedDetails := r.modifier.groupByOwner(details)
 	err = r.updateOwners(ctx, groupedDetails, ownerDetails)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 	return ctrl.Result{}, nil
-}
-
-func getOwnerDetails(pod *corev1.Pod) map[config.Owner]types.NamespacedName {
-	var res = make(map[config.Owner]types.NamespacedName)
-	for _, ownerRef := range pod.OwnerReferences {
-		var owner config.Owner
-		kind := config.Owner(ownerRef.Kind)
-		switch kind {
-		case config.Deployment:
-			owner = config.Deployment
-		case config.ReplicaSet:
-			owner = config.ReplicaSet
-		case config.DaemonSet:
-			owner = config.DaemonSet
-		}
-		if owner == "" {
-			continue
-		}
-		res[owner] = types.NamespacedName{Namespace: pod.Namespace, Name: ownerRef.Name}
-	}
-	return res
 }
 
 func (r *PodReconciler) updateOwners(ctx context.Context, groupedDetails map[config.Owner][]containerDetail, ownerNamespacedNames map[config.Owner]types.NamespacedName) error {
@@ -126,7 +123,7 @@ func (r *PodReconciler) updateDeployment(ctx context.Context, details []containe
 	}
 	currentOwnerAnnotations := deployment.ObjectMeta.Annotations
 	currentPodAnnotations := deployment.Spec.Template.Annotations
-	ownerAnnotations, podAnnotations, err := newAnnotations(details, currentOwnerAnnotations, currentPodAnnotations)
+	ownerAnnotations, podAnnotations, err := r.modifier.newAnnotations(details, currentOwnerAnnotations, currentPodAnnotations)
 	if err != nil {
 		fmt.Println("some error in generating new annotations..")
 		return fmt.Errorf("error in updating annotations for %s in %s: %w", deployment.Name, deployment.Namespace, err)
@@ -156,7 +153,7 @@ func (r *PodReconciler) updateDaemonSet(ctx context.Context, details []container
 	}
 	currentOwnerAnnotations := daemonSet.ObjectMeta.Annotations
 	currentPodAnnotations := daemonSet.Spec.Template.Annotations
-	ownerAnnotations, podAnnotations, err := newAnnotations(details, currentOwnerAnnotations, currentPodAnnotations)
+	ownerAnnotations, podAnnotations, err := r.modifier.newAnnotations(details, currentOwnerAnnotations, currentPodAnnotations)
 	if err != nil {
 		return fmt.Errorf("error in updating annotations for %s in %s: %w", daemonSet.Name, daemonSet.Namespace, err)
 	}
@@ -170,137 +167,4 @@ func (r *PodReconciler) updateDaemonSet(ctx context.Context, details []container
 	}
 
 	return err
-}
-
-func newAnnotations(details []containerDetail, currentOwnerAnnotations map[string]string, currentPodAnnotations map[string]string) (ownerAnnotations map[string]string, podAnnotations map[string]string, err error) {
-	if currentOwnerAnnotations != nil {
-		ownerAnnotations = currentOwnerAnnotations
-	} else {
-		ownerAnnotations = make(map[string]string)
-	}
-
-	if currentPodAnnotations != nil {
-		podAnnotations = currentPodAnnotations
-	} else {
-		podAnnotations = make(map[string]string)
-	}
-
-	var dasDetails = make(map[string]dasDetail)
-	dasDetailsStr, ok := currentOwnerAnnotations["das/details"]
-	if !ok {
-		for _, d := range details {
-			dasDetails[d.containerStatus.Name] = dasDetail{Name: d.sidecarConfig.Steps[0].Name, RestartCount: 1}
-		}
-		marshalledDetails, marshallErr := json.Marshal(dasDetails)
-		if err != nil {
-			err = fmt.Errorf("error marshalling json for %v: %w", dasDetails, marshallErr)
-			return
-		}
-		ownerAnnotations["das/details"] = string(marshalledDetails)
-		return
-	}
-
-	if unmarshalErr := json.Unmarshal([]byte(dasDetailsStr), &dasDetails); unmarshalErr != nil {
-		fmt.Println("error in unmarshalling:", unmarshalErr.Error())
-		err = fmt.Errorf("error parsing das details in %w", unmarshalErr)
-		return
-	}
-	// //compare das deatils with container details to check which ones are above restart count.
-	// //for the containers that have exceeded restart count, get the current resource limits value and
-	// //determine the next step value. update restart count to 0 for these containers as well
-	// //update deployment yaml
-	// //update s3 bucket.
-	for _, d := range details {
-		restartDetail, ok := dasDetails[d.containerStatus.Name]
-		if !ok {
-			dasDetails[d.containerStatus.Name] = dasDetail{Name: d.sidecarConfig.Steps[0].Name, RestartCount: 1}
-			continue
-		}
-		currentStep := getCurrentStep(d.sidecarConfig, restartDetail.Name)
-		if restartDetail.RestartCount+1 < currentStep.RestartLimit {
-			dasDetails[d.containerStatus.Name] = dasDetail{Name: restartDetail.Name, RestartCount: restartDetail.RestartCount + 1}
-			continue
-		}
-		nextStep := d.sidecarConfig.Steps[getNextStep(d.sidecarConfig, restartDetail.Name)]
-		if currentStep.Name == nextStep.Name {
-			dasDetails[d.containerStatus.Name] = dasDetail{Name: nextStep.Name, RestartCount: restartDetail.RestartCount + 1}
-			continue
-		}
-		dasDetails[d.containerStatus.Name] = dasDetail{Name: nextStep.Name}
-		podAnnotations[d.sidecarConfig.CPUAnnotationKey] = nextStep.CPURequest
-		podAnnotations[d.sidecarConfig.CPULimitAnnotationKey] = nextStep.CPULimit
-		podAnnotations[d.sidecarConfig.MemAnnotationKey] = nextStep.MemRequest
-		podAnnotations[d.sidecarConfig.MemLimitAnnotationKey] = nextStep.MemLimit
-	}
-
-	newDasDetails, marshalErr := json.Marshal(dasDetails)
-	if marshalErr != nil {
-		fmt.Println("error in marshalling:", marshalErr.Error())
-		err = fmt.Errorf("Error in marshalling the new das details after determining next step: %w", marshalErr)
-		return
-	}
-
-	ownerAnnotations["das/details"] = string(newDasDetails)
-	return
-}
-
-func getCurrentStep(sidecarConfig config.SidecarConfig, stepName string) config.ResourceStep {
-	i := slices.IndexFunc(sidecarConfig.Steps, func(step config.ResourceStep) bool {
-		if step.Name == stepName {
-			return true
-		}
-		return false
-	})
-
-	if i == -1 {
-		return config.ResourceStep{}
-	}
-	return sidecarConfig.Steps[i]
-}
-
-func getNextStep(sidecarConfig config.SidecarConfig, currentStep string) int {
-	res := slices.IndexFunc(sidecarConfig.Steps, func(step config.ResourceStep) bool {
-		if step.Name == currentStep {
-			return true
-		}
-		return false
-	})
-
-	if res == -1 || res == len(sidecarConfig.Steps)-1 {
-		return len(sidecarConfig.Steps) - 1
-	}
-	return res + 1
-}
-
-func matchDetails(pod *corev1.Pod, sidecars map[string]config.SidecarConfig) []containerDetail {
-	var res []containerDetail
-	for name, sidecarConfig := range sidecars {
-		for _, containerStatus := range pod.Status.ContainerStatuses {
-			if name == containerStatus.Name {
-				res = append(res, containerDetail{sidecarConfig: sidecarConfig, containerStatus: containerStatus})
-			}
-		}
-	}
-	return res
-}
-
-func filterTerminated(details []containerDetail) []containerDetail {
-	var filtered []containerDetail
-	for _, detail := range details {
-		if detail.containerStatus.State.Terminated != nil &&
-			slices.Contains(detail.sidecarConfig.ErrCodes, int(detail.containerStatus.State.Terminated.ExitCode)) {
-			filtered = append(filtered, detail)
-		}
-	}
-	return filtered
-}
-
-func groupByOwner(details []containerDetail) map[config.Owner][]containerDetail {
-	var res = make(map[config.Owner][]containerDetail)
-	for _, detail := range details {
-		mappedDetails := res[detail.sidecarConfig.Owner]
-		mappedDetails = append(mappedDetails, detail)
-		res[detail.sidecarConfig.Owner] = mappedDetails
-	}
-	return res
 }

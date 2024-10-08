@@ -133,7 +133,7 @@ spec:
       serviceAccountName: das
       containers:
       - name: das
-        image: das:0.33
+        image: das:0.34
         command: ["/das", "--config_file", "/config/config.json"]
         resources:
           limits:

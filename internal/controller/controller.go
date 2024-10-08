@@ -8,6 +8,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 
+// TODO: figure out log.SetLogger error
 func Start(conf config.Config) error {
 	manager, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		LeaderElection:          true,
@@ -17,11 +18,12 @@ func Start(conf config.Config) error {
 	if err != nil {
 		return fmt.Errorf("error creating new manager with cluster config: %w", err)
 	}
+	modifier := NewPodOwnerModifier(conf)
 
 	err = ctrl.
 		NewControllerManagedBy(manager).
 		For(&corev1.Pod{}).
-		Complete(&PodReconciler{Client: manager.GetClient(), conf: conf})
+		Complete(NewPodReconciler(manager.GetClient(), conf, modifier))
 	if err != nil {
 		return fmt.Errorf("error in setting reconciler for pod: %w", err)
 	}

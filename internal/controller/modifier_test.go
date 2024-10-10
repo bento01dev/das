@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/bento01dev/das/internal/config"
@@ -464,4 +465,217 @@ func TestGroupByOwner(t *testing.T) {
 			assert.Equal(t, testcase.expected, res)
 		})
 	}
+}
+
+// this is not the cleanest way to do tests
+// but splitting newAnnotations up further has diminishing returns
+func TestNewAnnotations(t *testing.T) {
+	testcases := []struct {
+		name                    string
+		details                 []containerDetail
+		currentDasDetails       map[string]dasDetail
+		currentOwnerAnnotations map[string]string
+		currentPodAnnotations   map[string]string
+		newDasDetails           map[string]dasDetail
+		newOwnerAnnotations     map[string]string
+		newPodAnnotations       map[string]string
+		err                     error
+	}{
+		{
+			name: "add das/details field if not exists with correct restart count",
+			details: []containerDetail{
+				{
+					sidecarConfig: config.SidecarConfig{
+						Steps: []config.ResourceStep{
+							{
+								Name: "test-step",
+							},
+						},
+					},
+					containerStatus: corev1.ContainerStatus{
+						Name: "test-container",
+					},
+				},
+			},
+			newDasDetails: map[string]dasDetail{
+				"test-container": dasDetail{
+					Name:         "test-step",
+					RestartCount: 1,
+				},
+			},
+			newOwnerAnnotations: make(map[string]string),
+			newPodAnnotations:   make(map[string]string),
+		},
+		{
+			name: "add to existing das/details for new entry",
+			details: []containerDetail{
+				{
+					sidecarConfig: config.SidecarConfig{
+						Steps: []config.ResourceStep{
+							{
+								Name: "test-step",
+							},
+						},
+					},
+					containerStatus: corev1.ContainerStatus{
+						Name: "test-container-1",
+					},
+				},
+			},
+			currentDasDetails: map[string]dasDetail{
+				"test-container": dasDetail{
+					Name:         "test-step",
+					RestartCount: 1,
+				},
+			},
+			newDasDetails: map[string]dasDetail{
+				"test-container": dasDetail{
+					Name:         "test-step",
+					RestartCount: 1,
+				},
+				"test-container-1": dasDetail{
+					Name:         "test-step",
+					RestartCount: 1,
+				},
+			},
+			currentOwnerAnnotations: make(map[string]string),
+			newOwnerAnnotations:     make(map[string]string),
+			newPodAnnotations:       make(map[string]string),
+		},
+		{
+			name: "increment restart count for existing das/details entry if less than restart count",
+			details: []containerDetail{
+				{
+					sidecarConfig: config.SidecarConfig{
+						Steps: []config.ResourceStep{
+							{
+								Name:         "test-step",
+								RestartLimit: 5,
+							},
+						},
+					},
+					containerStatus: corev1.ContainerStatus{
+						Name: "test-container",
+					},
+				},
+			},
+			currentDasDetails: map[string]dasDetail{
+				"test-container": dasDetail{
+					Name:         "test-step",
+					RestartCount: 1,
+				},
+			},
+			newDasDetails: map[string]dasDetail{
+				"test-container": dasDetail{
+					Name:         "test-step",
+					RestartCount: 2,
+				},
+			},
+			currentOwnerAnnotations: make(map[string]string),
+			newOwnerAnnotations:     make(map[string]string),
+			newPodAnnotations:       make(map[string]string),
+		},
+		{
+			name: "increment restart count if current step is the last step",
+			details: []containerDetail{
+				{
+					sidecarConfig: config.SidecarConfig{
+						Steps: []config.ResourceStep{
+							{
+								Name:         "test-step",
+								RestartLimit: 5,
+							},
+						},
+					},
+					containerStatus: corev1.ContainerStatus{
+						Name: "test-container",
+					},
+				},
+			},
+			currentDasDetails: map[string]dasDetail{
+				"test-container": dasDetail{
+					Name:         "test-step",
+					RestartCount: 6,
+				},
+			},
+			newDasDetails: map[string]dasDetail{
+				"test-container": dasDetail{
+					Name:         "test-step",
+					RestartCount: 7,
+				},
+			},
+			currentOwnerAnnotations: make(map[string]string),
+			newOwnerAnnotations:     make(map[string]string),
+			newPodAnnotations:       make(map[string]string),
+		},
+		{
+			name: "switch to next step if restart count has exceed for current step and current step is not the last step",
+			details: []containerDetail{
+				{
+					sidecarConfig: config.SidecarConfig{
+						Steps: []config.ResourceStep{
+							{
+								Name:         "test-step",
+								RestartLimit: 5,
+							},
+							{
+								Name:         "test-step-1",
+								RestartLimit: 5,
+								CPURequest:   "1",
+								CPULimit:     "1",
+								MemRequest:   "1Gi",
+								MemLimit:     "1Gi",
+							},
+						},
+						CPUAnnotationKey:      "test-cpu-request-key",
+						CPULimitAnnotationKey: "test-cpu-limit-key",
+						MemAnnotationKey:      "test-mem-request-key",
+						MemLimitAnnotationKey: "test-mem-limit-key",
+					},
+					containerStatus: corev1.ContainerStatus{
+						Name: "test-container",
+					},
+				},
+			},
+			currentDasDetails: map[string]dasDetail{
+				"test-container": dasDetail{
+					Name:         "test-step",
+					RestartCount: 6,
+				},
+			},
+			newDasDetails: map[string]dasDetail{
+				"test-container": dasDetail{
+					Name: "test-step-1",
+				},
+			},
+			currentOwnerAnnotations: make(map[string]string),
+			newOwnerAnnotations:     make(map[string]string),
+			newPodAnnotations: map[string]string{
+				"test-cpu-request-key": "1",
+				"test-cpu-limit-key":   "1",
+				"test-mem-request-key": "1Gi",
+				"test-mem-limit-key":   "1Gi",
+			},
+		},
+	}
+
+	for _, testcase := range testcases {
+		t.Run(testcase.name, func(t *testing.T) {
+			if testcase.currentDasDetails != nil {
+				currentDetailsStr, _ := json.Marshal(testcase.currentDasDetails)
+				testcase.currentOwnerAnnotations["das/details"] = string(currentDetailsStr)
+			}
+			if testcase.newDasDetails != nil {
+				newDetailsStr, _ := json.Marshal(testcase.newDasDetails)
+				testcase.newOwnerAnnotations["das/details"] = string(newDetailsStr)
+			}
+
+			m := NewPodOwnerModifier(config.Config{})
+			ownerAnnotations, podAnnotations, err := m.newAnnotations(testcase.details, testcase.currentOwnerAnnotations, testcase.currentPodAnnotations)
+			assert.Equal(t, testcase.newOwnerAnnotations, ownerAnnotations)
+			assert.Equal(t, testcase.newPodAnnotations, podAnnotations)
+			assert.Equal(t, testcase.err, err)
+		})
+	}
+
 }

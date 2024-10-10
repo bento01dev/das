@@ -133,11 +133,7 @@ func (p PodOwnerModifier) newAnnotations(details []containerDetail, currentOwner
 		err = fmt.Errorf("error parsing das details in %w", unmarshalErr)
 		return
 	}
-	// //compare das deatils with container details to check which ones are above restart count.
-	// //for the containers that have exceeded restart count, get the current resource limits value and
-	// //determine the next step value. update restart count to 0 for these containers as well
-	// //update deployment yaml
-	// //update s3 bucket.
+
 	for _, d := range details {
 		restartDetail, ok := dasDetails[d.containerStatus.Name]
 		if !ok {

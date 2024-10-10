@@ -2,6 +2,7 @@ package controller
 
 import (
 	"fmt"
+	"log/slog"
 
 	"github.com/bento01dev/das/internal/config"
 	corev1 "k8s.io/api/core/v1"
@@ -28,7 +29,7 @@ func Start(conf config.Config) error {
 		return fmt.Errorf("error in setting reconciler for pod: %w", err)
 	}
 
-	fmt.Println("starting manager..")
+	slog.Info("starting manager for das..")
 	//TODO: need to pass custom context
 	return manager.Start(ctrl.SetupSignalHandler())
 }

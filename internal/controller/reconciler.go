@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"github.com/bento01dev/das/internal/config"
 	appsv1 "k8s.io/api/apps/v1"
@@ -68,7 +69,7 @@ func (r *PodReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	pod := &corev1.Pod{}
 	err := r.Get(ctx, req.NamespacedName, pod)
 	if err != nil {
-		fmt.Printf("error getting pod for %s: %v\n", req.NamespacedName, err)
+		slog.Error("error getting pod", "pod_name", req.NamespacedName.Name, "namespace", req.Namespace, "err", err.Error())
 		return ctrl.Result{}, nil
 	}
 	ownerDetails := r.modifier.getOwnerDetails(pod)
@@ -80,8 +81,10 @@ func (r *PodReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	groupedDetails := r.modifier.groupByOwner(details)
 	err = r.updateOwners(ctx, groupedDetails, ownerDetails)
 	if err != nil {
+		slog.Error("error in updating owner", "pod_name", req.NamespacedName.Name, "namespace", req.Namespace, "err", err.Error())
 		return ctrl.Result{}, err
 	}
+	slog.Info("owner successfully updated", "pod_name", req.Name, "namespace", req.Namespace)
 	return ctrl.Result{}, nil
 }
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 
 	"github.com/bento01dev/das/internal/config"
 	"github.com/bento01dev/das/internal/controller"
@@ -32,38 +33,29 @@ func Run() error {
 	return nil
 }
 
-type ctrlLogger struct {
-	logger *slog.Logger
-}
-
-func (cl *ctrlLogger) Init(info logr.RuntimeInfo) {
-}
-
-func (cl *ctrlLogger) Enabled(level int) bool {
-	return true
-}
-
-func (cl *ctrlLogger) Info(level int, msg string, keysAndValues ...any) {
-	cl.logger.Info(msg, keysAndValues...)
-}
-
-func (cl *ctrlLogger) Error(err error, msg string, keysAndValues ...any) {
-	keysAndValues = append(keysAndValues, "err")
-	keysAndValues = append(keysAndValues, err.Error())
-	cl.logger.Error(msg, keysAndValues...)
-}
-
-func (cl *ctrlLogger) WithValues(keysAndValues ...any) logr.LogSink {
-	return cl
-}
-
-func (cl *ctrlLogger) WithName(name string) logr.LogSink {
-	return cl
-}
-
 func initLog() {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	slog.SetDefault(logger)
+	logLevelStr := os.Getenv("LOG_LEVEL")
+    fmt.Println("log level in env:", logLevelStr)
+	var logLevel slog.Level = slog.LevelWarn
+	if logLevelStr != "" {
+		switch strings.ToLower(logLevelStr) {
+		case "debug":
+			logLevel = slog.LevelDebug
+		case "info":
+			logLevel = slog.LevelInfo
+		case "warn":
+			logLevel = slog.LevelWarn
+		case "error":
+			logLevel = slog.LevelError
+		}
+	}
+	opts := slog.HandlerOptions{
+		Level: logLevel,
+	}
 
-	log.SetLogger(logr.New(&ctrlLogger{logger: logger}))
+    logHandler := slog.NewJSONHandler(os.Stdout, &opts)
+
+	logger := slog.New(logHandler)
+	slog.SetDefault(logger)
+    log.SetLogger(logr.FromSlogHandler(logHandler))
 }

@@ -3,6 +3,7 @@ package controller
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"slices"
 
 	"github.com/bento01dev/das/internal/config"
@@ -32,6 +33,7 @@ func (p PodOwnerModifier) getOwnerDetails(pod *corev1.Pod) map[config.Owner]type
 			owner = config.DaemonSet
 		}
 		if owner == "" {
+			slog.Debug("unsupported owner", "owner_type", owner)
 			continue
 		}
 		res[owner] = types.NamespacedName{Namespace: pod.Namespace, Name: ownerRef.Name}
@@ -48,6 +50,7 @@ func (p PodOwnerModifier) getCurrentStep(sidecarConfig config.SidecarConfig, ste
 	})
 
 	if i == -1 {
+		slog.Info("no step found for given name, returning empty step", "step_name", stepName)
 		return config.ResourceStep{}
 	}
 	return sidecarConfig.Steps[i]
@@ -61,9 +64,16 @@ func (p PodOwnerModifier) getNextStep(sidecarConfig config.SidecarConfig, curren
 		return false
 	})
 
-	if res == -1 || res == len(sidecarConfig.Steps)-1 {
+	if res == -1 {
+		slog.Info("Current step not found. returning last step to be safe..", "step_name", currentStep)
 		return len(sidecarConfig.Steps) - 1
 	}
+
+	if res == len(sidecarConfig.Steps)-1 {
+		slog.Info("On last step.. so returning the last step..", "step_name", currentStep)
+		return len(sidecarConfig.Steps) - 1
+	}
+
 	return res + 1
 }
 
@@ -84,6 +94,7 @@ func (p PodOwnerModifier) filterTerminated(details []containerDetail) []containe
 	for _, detail := range details {
 		if detail.containerStatus.State.Terminated != nil &&
 			slices.Contains(detail.sidecarConfig.ErrCodes, int(detail.containerStatus.State.Terminated.ExitCode)) {
+			slog.Debug("container termination matches error codes", "container_name", detail.containerStatus.Name)
 			filtered = append(filtered, detail)
 		}
 	}
@@ -121,6 +132,7 @@ func (p PodOwnerModifier) newAnnotations(details []containerDetail, currentOwner
 		}
 		marshalledDetails, marshallErr := json.Marshal(dasDetails)
 		if err != nil {
+			slog.Error("error marshalling json for das details", "err", marshallErr.Error())
 			err = fmt.Errorf("error marshalling json for %v: %w", dasDetails, marshallErr)
 			return
 		}
@@ -129,7 +141,7 @@ func (p PodOwnerModifier) newAnnotations(details []containerDetail, currentOwner
 	}
 
 	if unmarshalErr := json.Unmarshal([]byte(dasDetailsStr), &dasDetails); unmarshalErr != nil {
-		fmt.Println("error in unmarshalling:", unmarshalErr.Error())
+		slog.Error("error in unmarshalling das details", "err", unmarshalErr.Error())
 		err = fmt.Errorf("error parsing das details in %w", unmarshalErr)
 		return
 	}
@@ -137,19 +149,23 @@ func (p PodOwnerModifier) newAnnotations(details []containerDetail, currentOwner
 	for _, d := range details {
 		restartDetail, ok := dasDetails[d.containerStatus.Name]
 		if !ok {
+			slog.Debug("no existing das detail for container. adding first step", "container_name", d.containerStatus.Name, "step_name", d.sidecarConfig.Steps[0].Name, "restart_count", 1)
 			dasDetails[d.containerStatus.Name] = dasDetail{Name: d.sidecarConfig.Steps[0].Name, RestartCount: 1}
 			continue
 		}
 		currentStep := p.getCurrentStep(d.sidecarConfig, restartDetail.Name)
 		if restartDetail.RestartCount+1 < currentStep.RestartLimit {
+			slog.Debug("restart count less than current step limit", "container_name", d.containerStatus.Name, "step_name", restartDetail.Name, "restart_count", restartDetail.RestartCount+1)
 			dasDetails[d.containerStatus.Name] = dasDetail{Name: restartDetail.Name, RestartCount: restartDetail.RestartCount + 1}
 			continue
 		}
 		nextStep := d.sidecarConfig.Steps[p.getNextStep(d.sidecarConfig, restartDetail.Name)]
 		if currentStep.Name == nextStep.Name {
+			slog.Debug("current step and next step are the same. so its in the last step. just incrementing count.", "container_name", d.containerStatus.Name, "step_name", nextStep.Name, "restart_count", restartDetail.RestartCount+1)
 			dasDetails[d.containerStatus.Name] = dasDetail{Name: nextStep.Name, RestartCount: restartDetail.RestartCount + 1}
 			continue
 		}
+		slog.Info("Setting next step as new step for das detail for container", "container_name", d.containerStatus.Name, "step_name", nextStep.Name)
 		dasDetails[d.containerStatus.Name] = dasDetail{Name: nextStep.Name}
 		podAnnotations[d.sidecarConfig.CPUAnnotationKey] = nextStep.CPURequest
 		podAnnotations[d.sidecarConfig.CPULimitAnnotationKey] = nextStep.CPULimit
@@ -159,11 +175,12 @@ func (p PodOwnerModifier) newAnnotations(details []containerDetail, currentOwner
 
 	newDasDetails, marshalErr := json.Marshal(dasDetails)
 	if marshalErr != nil {
-		fmt.Println("error in marshalling:", marshalErr.Error())
+        slog.Error("error in marhsalling new das details", "err", marshalErr)
 		err = fmt.Errorf("Error in marshalling the new das details after determining next step: %w", marshalErr)
 		return
 	}
 
+    slog.Debug("setting new das details", "das_details", string(newDasDetails))
 	ownerAnnotations["das/details"] = string(newDasDetails)
 	return
 }

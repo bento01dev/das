@@ -175,12 +175,12 @@ func (p PodOwnerModifier) newAnnotations(details []containerDetail, currentOwner
 
 	newDasDetails, marshalErr := json.Marshal(dasDetails)
 	if marshalErr != nil {
-        slog.Error("error in marhsalling new das details", "err", marshalErr)
+		slog.Error("error in marhsalling new das details", "err", marshalErr)
 		err = fmt.Errorf("Error in marshalling the new das details after determining next step: %w", marshalErr)
 		return
 	}
 
-    slog.Debug("setting new das details", "das_details", string(newDasDetails))
+	slog.Debug("setting new das details", "das_details", string(newDasDetails))
 	ownerAnnotations["das/details"] = string(newDasDetails)
 	return
 }

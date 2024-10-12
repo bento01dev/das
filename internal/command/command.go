@@ -35,7 +35,7 @@ func Run() error {
 
 func initLog() {
 	logLevelStr := os.Getenv("LOG_LEVEL")
-    fmt.Println("log level in env:", logLevelStr)
+	fmt.Println("log level in env:", logLevelStr)
 	var logLevel slog.Level = slog.LevelWarn
 	if logLevelStr != "" {
 		switch strings.ToLower(logLevelStr) {
@@ -53,9 +53,9 @@ func initLog() {
 		Level: logLevel,
 	}
 
-    logHandler := slog.NewJSONHandler(os.Stdout, &opts)
+	logHandler := slog.NewJSONHandler(os.Stdout, &opts)
 
 	logger := slog.New(logHandler)
 	slog.SetDefault(logger)
-    log.SetLogger(logr.FromSlogHandler(logHandler))
+	log.SetLogger(logr.FromSlogHandler(logHandler))
 }

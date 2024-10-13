@@ -43,9 +43,9 @@ func NewS3StepStore() (S3StepStore, error) {
 	return S3StepStore{client: client, bucketName: bucketName}, nil
 }
 
-func (store S3StepStore) UploadNewStep(appName string, step config.ResourceStep) (string, error) {
+func (store S3StepStore) UploadNewSteps(appName string, steps map[string]config.ResourceStep) (string, error) {
 	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(step); err != nil {
+	if err := json.NewEncoder(&buf).Encode(steps); err != nil {
 		return "", err
 	}
 	output, err := store.client.PutObject(context.TODO(), &s3.PutObjectInput{

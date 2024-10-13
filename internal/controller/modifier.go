@@ -11,6 +11,12 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 )
 
+type newAnnotations struct {
+	ownerAnnotations map[string]string
+	podAnnotations   map[string]string
+	steps            map[string]config.ResourceStep
+}
+
 type PodOwnerModifier struct {
 	conf config.Config
 }
@@ -111,7 +117,13 @@ func (p PodOwnerModifier) groupByOwner(details []containerDetail) map[config.Own
 	return res
 }
 
-func (p PodOwnerModifier) newAnnotations(details []containerDetail, currentOwnerAnnotations map[string]string, currentPodAnnotations map[string]string) (ownerAnnotations map[string]string, podAnnotations map[string]string, err error) {
+func (p PodOwnerModifier) newAnnotations(details []containerDetail, currentOwnerAnnotations map[string]string, currentPodAnnotations map[string]string) (newAnnotations, error) {
+	var res newAnnotations
+	var ownerAnnotations map[string]string
+	var podAnnotations map[string]string
+	var steps map[string]config.ResourceStep = make(map[string]config.ResourceStep)
+	var err error
+
 	if currentOwnerAnnotations != nil {
 		ownerAnnotations = currentOwnerAnnotations
 	} else {
@@ -134,16 +146,18 @@ func (p PodOwnerModifier) newAnnotations(details []containerDetail, currentOwner
 		if err != nil {
 			slog.Error("error marshalling json for das details", "err", marshallErr.Error())
 			err = fmt.Errorf("error marshalling json for %v: %w", dasDetails, marshallErr)
-			return
+			return res, err
 		}
 		ownerAnnotations["das/details"] = string(marshalledDetails)
-		return
+		res.ownerAnnotations = ownerAnnotations
+		res.podAnnotations = podAnnotations
+		return res, nil
 	}
 
 	if unmarshalErr := json.Unmarshal([]byte(dasDetailsStr), &dasDetails); unmarshalErr != nil {
 		slog.Error("error in unmarshalling das details", "err", unmarshalErr.Error())
 		err = fmt.Errorf("error parsing das details in %w", unmarshalErr)
-		return
+		return res, err
 	}
 
 	for _, d := range details {
@@ -171,16 +185,22 @@ func (p PodOwnerModifier) newAnnotations(details []containerDetail, currentOwner
 		podAnnotations[d.sidecarConfig.CPULimitAnnotationKey] = nextStep.CPULimit
 		podAnnotations[d.sidecarConfig.MemAnnotationKey] = nextStep.MemRequest
 		podAnnotations[d.sidecarConfig.MemLimitAnnotationKey] = nextStep.MemLimit
+		steps[d.containerStatus.Name] = nextStep
 	}
 
 	newDasDetails, marshalErr := json.Marshal(dasDetails)
 	if marshalErr != nil {
 		slog.Error("error in marhsalling new das details", "err", marshalErr)
 		err = fmt.Errorf("Error in marshalling the new das details after determining next step: %w", marshalErr)
-		return
+		return res, nil
 	}
 
 	slog.Debug("setting new das details", "das_details", string(newDasDetails))
 	ownerAnnotations["das/details"] = string(newDasDetails)
-	return
+
+	res.ownerAnnotations = ownerAnnotations
+	res.podAnnotations = podAnnotations
+	res.steps = steps
+
+	return res, nil
 }

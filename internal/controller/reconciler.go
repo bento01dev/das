@@ -36,11 +36,11 @@ type modifier interface {
 	matchDetails(pod *corev1.Pod) []containerDetail
 	filterTerminated(details []containerDetail) []containerDetail
 	groupByOwner(details []containerDetail) map[config.Owner][]containerDetail
-	newAnnotations(details []containerDetail, currentOwnerAnnotations map[string]string, currentPodAnnotations map[string]string) (ownerAnnotations map[string]string, podAnnotations map[string]string, err error)
+	newAnnotations(details []containerDetail, currentOwnerAnnotations map[string]string, currentPodAnnotations map[string]string) (newAnnotations, error)
 }
 
 type storer interface {
-	UploadNewStep(appName string, step config.ResourceStep) (string, error)
+	UploadNewSteps(appName string, steps map[string]config.ResourceStep) (string, error)
 }
 
 type PodReconciler struct {
@@ -85,42 +85,50 @@ func (r *PodReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 		return ctrl.Result{}, nil
 	}
 	groupedDetails := r.modifier.groupByOwner(details)
-	err = r.updateOwners(ctx, groupedDetails, ownerDetails)
+	nextSteps, err := r.updateOwners(ctx, groupedDetails, ownerDetails)
 	if err != nil {
 		slog.Error("error in updating owner", "pod_name", req.NamespacedName.Name, "namespace", req.Namespace, "err", err.Error())
 		return ctrl.Result{}, err
+	}
+	if nextSteps != nil && len(nextSteps) > 1 {
+		//TODO: handle error
+		r.storer.UploadNewSteps("", nextSteps)
 	}
 	slog.Info("owner successfully updated", "pod_name", req.Name, "namespace", req.Namespace)
 	return ctrl.Result{}, nil
 }
 
-func (r *PodReconciler) updateOwners(ctx context.Context, groupedDetails map[config.Owner][]containerDetail, ownerNamespacedNames map[config.Owner]types.NamespacedName) error {
+func (r *PodReconciler) updateOwners(ctx context.Context, groupedDetails map[config.Owner][]containerDetail, ownerNamespacedNames map[config.Owner]types.NamespacedName) (map[string]config.ResourceStep, error) {
 	var err error
+	var res map[string]config.ResourceStep
+
 	for owner, details := range groupedDetails {
 		switch owner {
 		case config.Deployment:
 			slog.Debug("calling update deployment", "details", details, "owner_namespaces", ownerNamespacedNames)
-			err = r.updateDeployment(ctx, details, ownerNamespacedNames)
+			res, err = r.updateDeployment(ctx, details, ownerNamespacedNames)
 		case config.DaemonSet:
 			slog.Debug("calling update daemon set", "details", details, "owner_namespaces", ownerNamespacedNames)
-			err = r.updateDaemonSet(ctx, details, ownerNamespacedNames)
+			res, err = r.updateDaemonSet(ctx, details, ownerNamespacedNames)
 		}
 	}
-	return err
+	return res, err
 }
 
-func (r *PodReconciler) updateDeployment(ctx context.Context, details []containerDetail, ownerNamespacedNames map[config.Owner]types.NamespacedName) error {
+func (r *PodReconciler) updateDeployment(ctx context.Context, details []containerDetail, ownerNamespacedNames map[config.Owner]types.NamespacedName) (map[string]config.ResourceStep, error) {
 	var err error
+	var res map[string]config.ResourceStep
+
 	replicaNamespacedName, ok := ownerNamespacedNames[config.ReplicaSet]
 	if !ok {
 		slog.Warn("replica set detail not found in map", "owner_namespaces", ownerNamespacedNames)
-		return errors.New("replica set detail not found in map")
+		return res, errors.New("replica set detail not found in map")
 	}
 	var replicaSet appsv1.ReplicaSet
 	err = r.Get(ctx, replicaNamespacedName, &replicaSet)
 	if err != nil {
 		slog.Error("error retrieving replica set", "err", err.Error(), "owner_name", replicaNamespacedName.Name, "owner_namespace", replicaNamespacedName.Namespace)
-		return fmt.Errorf("error in retrieving replica set as owner of pod: %w", err)
+		return res, fmt.Errorf("error in retrieving replica set as owner of pod: %w", err)
 	}
 	var deploymentNamespacedName types.NamespacedName
 	for _, owner := range replicaSet.OwnerReferences {
@@ -133,55 +141,57 @@ func (r *PodReconciler) updateDeployment(ctx context.Context, details []containe
 	err = r.Get(ctx, deploymentNamespacedName, &deployment)
 	if err != nil {
 		slog.Error("error retrieving deployment", "err", err.Error(), "owner_name", deploymentNamespacedName.Name, "owner_namespace", deploymentNamespacedName.Namespace)
-		return fmt.Errorf("error in retrieving deployment as owner of pod: %w", err)
+		return res, fmt.Errorf("error in retrieving deployment as owner of pod: %w", err)
 	}
 	currentOwnerAnnotations := deployment.ObjectMeta.Annotations
 	currentPodAnnotations := deployment.Spec.Template.Annotations
-	ownerAnnotations, podAnnotations, err := r.modifier.newAnnotations(details, currentOwnerAnnotations, currentPodAnnotations)
+	newAnnotations, err := r.modifier.newAnnotations(details, currentOwnerAnnotations, currentPodAnnotations)
 	if err != nil {
 		slog.Error("error in generating new annotations for deployment", "err", err.Error(), "current_owner_annotations", currentOwnerAnnotations, "current_pod_annotations", currentPodAnnotations)
-		return fmt.Errorf("error in updating annotations for %s in %s: %w", deployment.Name, deployment.Namespace, err)
+		return res, fmt.Errorf("error in updating annotations for %s in %s: %w", deployment.Name, deployment.Namespace, err)
 	}
-	deployment.ObjectMeta.Annotations = ownerAnnotations
-	deployment.Spec.Template.Annotations = podAnnotations
+	deployment.ObjectMeta.Annotations = newAnnotations.ownerAnnotations
+	deployment.Spec.Template.Annotations = newAnnotations.podAnnotations
 
 	err = r.Update(ctx, &deployment)
 	if err != nil {
 		slog.Error("error in updating deployment", "err", err.Error(), "owner_name", deploymentNamespacedName.Name, "owner_namespace", deploymentNamespacedName.Namespace)
-		return fmt.Errorf("error updating deployment with the new annotations for %s: %w", deployment.Name, err)
+		return res, fmt.Errorf("error updating deployment with the new annotations for %s: %w", deployment.Name, err)
 	}
 
-	return err
+	return newAnnotations.steps, nil
 }
 
-func (r *PodReconciler) updateDaemonSet(ctx context.Context, details []containerDetail, ownerNamespacedNames map[config.Owner]types.NamespacedName) error {
+func (r *PodReconciler) updateDaemonSet(ctx context.Context, details []containerDetail, ownerNamespacedNames map[config.Owner]types.NamespacedName) (map[string]config.ResourceStep, error) {
 	var err error
+	var res map[string]config.ResourceStep
+
 	daemonSetNamespacedName, ok := ownerNamespacedNames[config.DaemonSet]
 	if !ok {
 		slog.Warn("replica set detail not found in map", "owner_namespaces", ownerNamespacedNames)
-		return errors.New("daemon set namespaced name not found in owner details")
+		return res, errors.New("daemon set namespaced name not found in owner details")
 	}
 	var daemonSet appsv1.DaemonSet
 	err = r.Get(ctx, daemonSetNamespacedName, &daemonSet)
 	if err != nil {
 		slog.Error("error retrieving replica set", "err", err.Error(), "owner_name", daemonSetNamespacedName.Name, "owner_namespace", daemonSetNamespacedName.Namespace)
-		return fmt.Errorf("error in retrieving daemon set details for %v: %w", daemonSetNamespacedName, err)
+		return res, fmt.Errorf("error in retrieving daemon set details for %v: %w", daemonSetNamespacedName, err)
 	}
 	currentOwnerAnnotations := daemonSet.ObjectMeta.Annotations
 	currentPodAnnotations := daemonSet.Spec.Template.Annotations
-	ownerAnnotations, podAnnotations, err := r.modifier.newAnnotations(details, currentOwnerAnnotations, currentPodAnnotations)
+	newAnnotations, err := r.modifier.newAnnotations(details, currentOwnerAnnotations, currentPodAnnotations)
 	if err != nil {
 		slog.Error("error in generating new annotations for daemonset", "err", err.Error(), "current_owner_annotations", currentOwnerAnnotations, "current_pod_annotations", currentPodAnnotations)
-		return fmt.Errorf("error in updating annotations for %s in %s: %w", daemonSet.Name, daemonSet.Namespace, err)
+		return res, fmt.Errorf("error in updating annotations for %s in %s: %w", daemonSet.Name, daemonSet.Namespace, err)
 	}
-	daemonSet.ObjectMeta.Annotations = ownerAnnotations
-	daemonSet.Spec.Template.Annotations = podAnnotations
+	daemonSet.ObjectMeta.Annotations = newAnnotations.ownerAnnotations
+	daemonSet.Spec.Template.Annotations = newAnnotations.podAnnotations
 
 	err = r.Update(ctx, &daemonSet)
 	if err != nil {
 		slog.Error("error in updating daemon set", "err", err.Error(), "owner_name", daemonSetNamespacedName.Name, "owner_namespace", daemonSetNamespacedName.Namespace)
-		return fmt.Errorf("error updating deployment with the new annotations for %s: %w", daemonSet.Name, err)
+		return res, fmt.Errorf("error updating deployment with the new annotations for %s: %w", daemonSet.Name, err)
 	}
 
-	return err
+	return newAnnotations.steps, nil
 }

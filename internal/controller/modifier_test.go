@@ -671,9 +671,9 @@ func TestNewAnnotations(t *testing.T) {
 			}
 
 			m := NewPodOwnerModifier(config.Config{})
-			ownerAnnotations, podAnnotations, err := m.newAnnotations(testcase.details, testcase.currentOwnerAnnotations, testcase.currentPodAnnotations)
-			assert.Equal(t, testcase.newOwnerAnnotations, ownerAnnotations)
-			assert.Equal(t, testcase.newPodAnnotations, podAnnotations)
+			res, err := m.newAnnotations(testcase.details, testcase.currentOwnerAnnotations, testcase.currentPodAnnotations)
+			assert.Equal(t, testcase.newOwnerAnnotations, res.ownerAnnotations)
+			assert.Equal(t, testcase.newPodAnnotations, res.podAnnotations)
 			assert.Equal(t, testcase.err, err)
 		})
 	}

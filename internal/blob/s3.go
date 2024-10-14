@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 
 	"github.com/bento01dev/das/internal/config"
@@ -44,14 +45,15 @@ func NewS3StepStore() (S3StepStore, error) {
 }
 
 func (store S3StepStore) UploadNewSteps(appName string, steps map[string]config.ResourceStep) (string, error) {
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(steps); err != nil {
+	data, err := json.Marshal(steps)
+	if err != nil {
 		return "", err
 	}
+	fileName := fmt.Sprintf("%s.json", appName)
 	output, err := store.client.PutObject(context.TODO(), &s3.PutObjectInput{
 		Bucket: aws.String(store.bucketName),
-		Key:    aws.String(appName),
-		Body:   &buf,
+		Key:    aws.String(fileName),
+		Body:   bytes.NewReader(data),
 	})
 	if err != nil {
 		return "", err

@@ -133,11 +133,23 @@ spec:
       serviceAccountName: das
       containers:
       - name: das
-        image: das:0.42
+        image: das:0.43
         command: ["/das", "--config_file", "/config/config.json"]
         env:
           - name: LOG_LEVEL
             value: info
+          - name: STORAGE_TYPE
+            value: s3
+          - name: AWS_ENDPOINT
+            value: http://172.18.0.2:31566
+          - name: S3_BUCKET
+            value: das
+          - name: AWS_ACCESS_KEY_ID
+            value: test
+          - name: AWS_SECRET_ACCESS_KEY
+            value: test
+          - name: AWS_REGION
+            value: us-east-1
         resources:
           limits:
             cpu: "1"

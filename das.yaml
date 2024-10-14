@@ -80,7 +80,7 @@ metadata:
 data:
   config.json: |
     {
-      "s3_bucket": "test",
+      "app_label_name": "app.kubernetes.io/name",
       "sidecars": {
           "test-sidecar": {
             "err_codes": [
@@ -133,11 +133,11 @@ spec:
       serviceAccountName: das
       containers:
       - name: das
-        image: das:0.38
+        image: das:0.42
         command: ["/das", "--config_file", "/config/config.json"]
         env:
           - name: LOG_LEVEL
-            value: debug
+            value: info
         resources:
           limits:
             cpu: "1"

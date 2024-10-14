@@ -60,8 +60,8 @@ type SidecarConfig struct {
 }
 
 type Config struct {
-	S3Bucket string                   `json:"s3_bucket"`
-	Sidecars map[string]SidecarConfig `json:"sidecars"`
+	LabelName string                   `json:"app_label_name"`
+	Sidecars  map[string]SidecarConfig `json:"sidecars"`
 }
 
 // TODO: add cue validation if needed

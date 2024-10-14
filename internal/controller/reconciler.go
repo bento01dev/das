@@ -29,6 +29,11 @@ type dasDetail struct {
 	RestartCount int    `json:"restart_count"`
 }
 
+type updateResult struct {
+	appName string
+	steps   map[string]config.ResourceStep
+}
+
 type modifier interface {
 	getOwnerDetails(pod *corev1.Pod) map[config.Owner]types.NamespacedName
 	getCurrentStep(sidecarConfig config.SidecarConfig, stepName string) config.ResourceStep
@@ -85,22 +90,25 @@ func (r *PodReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 		return ctrl.Result{}, nil
 	}
 	groupedDetails := r.modifier.groupByOwner(details)
-	nextSteps, err := r.updateOwners(ctx, groupedDetails, ownerDetails)
+	updateResult, err := r.updateOwners(ctx, groupedDetails, ownerDetails)
 	if err != nil {
 		slog.Error("error in updating owner", "pod_name", req.NamespacedName.Name, "namespace", req.Namespace, "err", err.Error())
 		return ctrl.Result{}, err
 	}
-	if nextSteps != nil && len(nextSteps) > 1 {
-		//TODO: handle error
-		r.storer.UploadNewSteps("", nextSteps)
+	if updateResult.steps != nil && len(updateResult.steps) > 0 {
+		eTag, err := r.storer.UploadNewSteps(updateResult.appName, updateResult.steps)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		slog.Info("new steps successfully updated", "etag", eTag)
 	}
 	slog.Info("owner successfully updated", "pod_name", req.Name, "namespace", req.Namespace)
 	return ctrl.Result{}, nil
 }
 
-func (r *PodReconciler) updateOwners(ctx context.Context, groupedDetails map[config.Owner][]containerDetail, ownerNamespacedNames map[config.Owner]types.NamespacedName) (map[string]config.ResourceStep, error) {
+func (r *PodReconciler) updateOwners(ctx context.Context, groupedDetails map[config.Owner][]containerDetail, ownerNamespacedNames map[config.Owner]types.NamespacedName) (updateResult, error) {
 	var err error
-	var res map[string]config.ResourceStep
+	var res updateResult
 
 	for owner, details := range groupedDetails {
 		switch owner {
@@ -115,9 +123,9 @@ func (r *PodReconciler) updateOwners(ctx context.Context, groupedDetails map[con
 	return res, err
 }
 
-func (r *PodReconciler) updateDeployment(ctx context.Context, details []containerDetail, ownerNamespacedNames map[config.Owner]types.NamespacedName) (map[string]config.ResourceStep, error) {
+func (r *PodReconciler) updateDeployment(ctx context.Context, details []containerDetail, ownerNamespacedNames map[config.Owner]types.NamespacedName) (updateResult, error) {
 	var err error
-	var res map[string]config.ResourceStep
+	var res updateResult
 
 	replicaNamespacedName, ok := ownerNamespacedNames[config.ReplicaSet]
 	if !ok {
@@ -143,6 +151,7 @@ func (r *PodReconciler) updateDeployment(ctx context.Context, details []containe
 		slog.Error("error retrieving deployment", "err", err.Error(), "owner_name", deploymentNamespacedName.Name, "owner_namespace", deploymentNamespacedName.Namespace)
 		return res, fmt.Errorf("error in retrieving deployment as owner of pod: %w", err)
 	}
+	appName := deployment.Labels[r.conf.LabelName]
 	currentOwnerAnnotations := deployment.ObjectMeta.Annotations
 	currentPodAnnotations := deployment.Spec.Template.Annotations
 	newAnnotations, err := r.modifier.newAnnotations(details, currentOwnerAnnotations, currentPodAnnotations)
@@ -159,12 +168,14 @@ func (r *PodReconciler) updateDeployment(ctx context.Context, details []containe
 		return res, fmt.Errorf("error updating deployment with the new annotations for %s: %w", deployment.Name, err)
 	}
 
-	return newAnnotations.steps, nil
+	res = updateResult{appName: appName, steps: newAnnotations.steps}
+
+	return res, nil
 }
 
-func (r *PodReconciler) updateDaemonSet(ctx context.Context, details []containerDetail, ownerNamespacedNames map[config.Owner]types.NamespacedName) (map[string]config.ResourceStep, error) {
+func (r *PodReconciler) updateDaemonSet(ctx context.Context, details []containerDetail, ownerNamespacedNames map[config.Owner]types.NamespacedName) (updateResult, error) {
 	var err error
-	var res map[string]config.ResourceStep
+	var res updateResult
 
 	daemonSetNamespacedName, ok := ownerNamespacedNames[config.DaemonSet]
 	if !ok {
@@ -177,6 +188,7 @@ func (r *PodReconciler) updateDaemonSet(ctx context.Context, details []container
 		slog.Error("error retrieving replica set", "err", err.Error(), "owner_name", daemonSetNamespacedName.Name, "owner_namespace", daemonSetNamespacedName.Namespace)
 		return res, fmt.Errorf("error in retrieving daemon set details for %v: %w", daemonSetNamespacedName, err)
 	}
+	appName := daemonSet.Labels[r.conf.LabelName]
 	currentOwnerAnnotations := daemonSet.ObjectMeta.Annotations
 	currentPodAnnotations := daemonSet.Spec.Template.Annotations
 	newAnnotations, err := r.modifier.newAnnotations(details, currentOwnerAnnotations, currentPodAnnotations)
@@ -193,5 +205,7 @@ func (r *PodReconciler) updateDaemonSet(ctx context.Context, details []container
 		return res, fmt.Errorf("error updating deployment with the new annotations for %s: %w", daemonSet.Name, err)
 	}
 
-	return newAnnotations.steps, nil
+	res = updateResult{appName: appName, steps: newAnnotations.steps}
+
+	return res, nil
 }

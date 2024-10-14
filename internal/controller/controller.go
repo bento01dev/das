@@ -45,8 +45,10 @@ func getStorer() (storer, error) {
 	slog.Info("initialising step store", "storage_type", storageType)
 	switch strings.ToLower(storageType) {
 	case "s3":
+		slog.Info("initialising s3 store")
 		return blob.NewS3StepStore()
 	default:
+		slog.Info("initialising dummy store..")
 		return blob.DummyStepStore{}, nil
 	}
 }

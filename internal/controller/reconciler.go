@@ -76,7 +76,6 @@ func NewPodReconciler(c client.Client, conf config.Config, m modifier, s storer)
 // update all resources (or single resource if multiple containers are having errors and tied to the same resource)
 // update should include resetting the count for the containers in meta data and updating the necessary annotation for the container
 // update S3 to the new limits for the container for the resource name
-// TODO: figure out operation failed. object updated error
 func (r *PodReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	pod := &corev1.Pod{}
 	err := r.Get(ctx, req.NamespacedName, pod)

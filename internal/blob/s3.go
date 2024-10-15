@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/bento01dev/das/internal/config"
 
@@ -50,7 +51,11 @@ func (store S3StepStore) UploadNewSteps(appName string, steps map[string]config.
 		return "", err
 	}
 	fileName := fmt.Sprintf("%s.json", appName)
-	output, err := store.client.PutObject(context.TODO(), &s3.PutObjectInput{
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	output, err := store.client.PutObject(ctx, &s3.PutObjectInput{
 		Bucket: aws.String(store.bucketName),
 		Key:    aws.String(fileName),
 		Body:   bytes.NewReader(data),

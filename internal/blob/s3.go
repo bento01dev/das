@@ -14,7 +14,10 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsConfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/smithy-go"
 )
+
+var ErrStoreContextTimeout = errors.New("context timed out in storing step")
 
 type S3StepStore struct {
 	client     *s3.Client
@@ -61,6 +64,10 @@ func (store S3StepStore) UploadNewSteps(appName string, steps map[string]config.
 		Body:   bytes.NewReader(data),
 	})
 	if err != nil {
+		var e *smithy.CanceledError
+		if errors.As(err, &e) {
+			err = ErrStoreContextTimeout
+		}
 		return "", err
 	}
 	return *output.ETag, nil

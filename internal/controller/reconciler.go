@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/bento01dev/das/internal/blob"
 	"github.com/bento01dev/das/internal/config"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -101,6 +102,10 @@ func (r *PodReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	if updateResult.steps != nil && len(updateResult.steps) > 0 {
 		eTag, err := r.storer.UploadNewSteps(updateResult.appName, updateResult.steps)
 		if err != nil {
+			// retry if context timed out with backoff
+			if errors.Is(err, blob.ErrStoreContextTimeout) {
+				return ctrl.Result{}, err
+			}
 			// while this error can cause issues with deployment later,
 			// retrying would be stress on apiserver. better to have a terminal error
 			// and have alerts with metrics

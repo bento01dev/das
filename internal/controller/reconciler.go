@@ -12,6 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
 type containerDetail struct {
@@ -81,6 +82,8 @@ func (r *PodReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	err := r.Get(ctx, req.NamespacedName, pod)
 	if err != nil {
 		slog.Error("error getting pod", "pod_name", req.NamespacedName.Name, "namespace", req.Namespace, "err", err.Error())
+		// this could be because pod has been deleted. drop the event.
+		// if the error code for the pods persists, it would be caught later
 		return ctrl.Result{}, nil
 	}
 	ownerDetails := r.modifier.getOwnerDetails(pod)
@@ -93,12 +96,16 @@ func (r *PodReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	updateResult, err := r.updateOwners(ctx, groupedDetails, ownerDetails)
 	if err != nil {
 		slog.Error("error in updating owner", "pod_name", req.NamespacedName.Name, "namespace", req.Namespace, "err", err.Error())
+		// this error could be because of conflict in update. retry with backoff as normal
 		return ctrl.Result{}, err
 	}
 	if updateResult.steps != nil && len(updateResult.steps) > 0 {
 		eTag, err := r.storer.UploadNewSteps(updateResult.appName, updateResult.steps)
 		if err != nil {
-			return ctrl.Result{}, err
+			// while this error can cause issues with deployment later,
+			// retrying would be stress on apiserver. better to have a terminal error
+			// and have alerts with metrics
+			return ctrl.Result{}, reconcile.TerminalError(err)
 		}
 		slog.Info("new steps successfully updated", "etag", eTag)
 	}
@@ -151,7 +158,11 @@ func (r *PodReconciler) updateDeployment(ctx context.Context, details []containe
 		slog.Error("error retrieving deployment", "err", err.Error(), "owner_name", deploymentNamespacedName.Name, "owner_namespace", deploymentNamespacedName.Namespace)
 		return res, fmt.Errorf("error in retrieving deployment as owner of pod: %w", err)
 	}
-	appName := deployment.Labels[r.conf.LabelName]
+	labelName := "app.kubernetes.io/name"
+	if r.conf.LabelName != "" {
+		labelName = r.conf.LabelName
+	}
+	appName := deployment.Labels[labelName]
 	currentOwnerAnnotations := deployment.ObjectMeta.Annotations
 	currentPodAnnotations := deployment.Spec.Template.Annotations
 	newAnnotations, err := r.modifier.newAnnotations(details, currentOwnerAnnotations, currentPodAnnotations)
@@ -188,7 +199,11 @@ func (r *PodReconciler) updateDaemonSet(ctx context.Context, details []container
 		slog.Error("error retrieving replica set", "err", err.Error(), "owner_name", daemonSetNamespacedName.Name, "owner_namespace", daemonSetNamespacedName.Namespace)
 		return res, fmt.Errorf("error in retrieving daemon set details for %v: %w", daemonSetNamespacedName, err)
 	}
-	appName := daemonSet.Labels[r.conf.LabelName]
+	labelName := "app.kubernetes.io/name"
+	if r.conf.LabelName != "" {
+		labelName = r.conf.LabelName
+	}
+	appName := daemonSet.Labels[labelName]
 	currentOwnerAnnotations := daemonSet.ObjectMeta.Annotations
 	currentPodAnnotations := daemonSet.Spec.Template.Annotations
 	newAnnotations, err := r.modifier.newAnnotations(details, currentOwnerAnnotations, currentPodAnnotations)

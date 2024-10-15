@@ -66,7 +66,7 @@ func (store S3StepStore) UploadNewSteps(appName string, steps map[string]config.
 	if err != nil {
 		var e *smithy.CanceledError
 		if errors.As(err, &e) {
-			err = ErrStoreContextTimeout
+            return "", ErrStoreContextTimeout
 		}
 		return "", err
 	}

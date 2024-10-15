@@ -36,7 +36,6 @@ func Start(conf config.Config) error {
 	}
 
 	slog.Info("starting manager for das..")
-	//TODO: need to pass custom context
 	return manager.Start(ctrl.SetupSignalHandler())
 }
 

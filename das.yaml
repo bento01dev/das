@@ -132,7 +132,7 @@ spec:
       serviceAccountName: das
       containers:
       - name: das
-        image: das:0.49
+        image: das:0.50
         command: ["/das", "--config_file", "/config/config.json"]
         env:
           - name: LOG_LEVEL

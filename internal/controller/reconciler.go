@@ -124,9 +124,6 @@ func (r *PodReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 }
 
 func (r *PodReconciler) updateOwners(ctx context.Context, groupedDetails map[config.Owner][]containerDetail, ownerNamespacedNames map[config.Owner]types.NamespacedName) (updateResult, error) {
-	var err error
-	var res updateResult
-
 	// okay, yes this for loop looks a bit weird.
 	// map of owners cannot have deployment and daemon set for the same container.
 	// the reason its this way is because in the case of a deployment, a mutating webhook or manual addition of annotation can happen at a deployment, replicaset or pod level.
@@ -135,18 +132,32 @@ func (r *PodReconciler) updateOwners(ctx context.Context, groupedDetails map[con
 	// basically a pod can be composed into different levels. the container resource limits could be set at any level above and for different containers in a pod, each respective owner needs to get updated.
 	// so how does this looping then ensure groupedDetails does not show up with a container having say deployment and daemonset as owner?
 	// boils down to the configuration. the configuration has sidecars as a map[string]SidecarConfig. SidecarConfig has Owner (not as a slice). So if you try to name the same sidecar as being owned by two different owners, config load will fail and this controller wont start.
-    // i havent found a better method yet. can change the config format later.
-	for owner, details := range groupedDetails {
-		switch owner {
-		case config.Deployment:
-			slog.Debug("calling update deployment", "details", details, "owner_namespaces", ownerNamespacedNames)
-			res, err = r.updateDeployment(ctx, details, ownerNamespacedNames)
-		case config.DaemonSet:
-			slog.Debug("calling update daemon set", "details", details, "owner_namespaces", ownerNamespacedNames)
-			res, err = r.updateDaemonSet(ctx, details, ownerNamespacedNames)
-		}
+	// i havent found a better method yet. can change the config format later.
+	deploymentDetails, deploymentExists := groupedDetails[config.Deployment]
+	daemonSetDetails, daemonsetExists := groupedDetails[config.DaemonSet]
+
+	if deploymentExists && daemonsetExists {
+		return updateResult{}, errors.New("deployment and daemonset cannot be owner for the same pod/container")
 	}
-	return res, err
+
+	if deploymentExists {
+		slog.Debug("calling update deployment", "details", deploymentDetails, "owner_namespaces", ownerNamespacedNames)
+		deploymentRes, err := r.updateDeployment(ctx, deploymentDetails, ownerNamespacedNames)
+		if err != nil {
+			return updateResult{}, err
+		}
+		return deploymentRes, nil
+	}
+
+	if daemonsetExists {
+		slog.Debug("calling update daemon set", "details", daemonSetDetails, "owner_namespaces", ownerNamespacedNames)
+		daemonsetRes, err := r.updateDaemonSet(ctx, daemonSetDetails, ownerNamespacedNames)
+		if err != nil {
+			return updateResult{}, err
+		}
+		return daemonsetRes, nil
+	}
+	return updateResult{}, nil
 }
 
 func (r *PodReconciler) updateDeployment(ctx context.Context, details []containerDetail, ownerNamespacedNames map[config.Owner]types.NamespacedName) (updateResult, error) {

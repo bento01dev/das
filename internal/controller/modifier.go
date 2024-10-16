@@ -104,7 +104,7 @@ func (p PodOwnerModifier) filterTerminated(details []containerDetail) []containe
 }
 
 func (p PodOwnerModifier) groupByOwner(details []containerDetail) map[config.Owner][]containerDetail {
-	var res = make(map[config.Owner][]containerDetail)
+	res := make(map[config.Owner][]containerDetail)
 	for _, detail := range details {
 		res[detail.sidecarConfig.Owner] = append(res[detail.sidecarConfig.Owner], detail)
 	}

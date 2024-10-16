@@ -88,6 +88,7 @@ func (r *PodReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 		// if the error code for the pods persists, it would be caught later
 		return ctrl.Result{}, nil
 	}
+
 	ownerDetails := r.modifier.getOwnerDetails(pod)
 	details := r.modifier.matchDetails(pod)
 	details = r.modifier.filterTerminated(details)
@@ -95,12 +96,14 @@ func (r *PodReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 		return ctrl.Result{}, nil
 	}
 	groupedDetails := r.modifier.groupByOwner(details)
+
 	updateResult, err := r.updateOwners(ctx, groupedDetails, ownerDetails)
 	if err != nil {
 		slog.Error("error in updating owner", "pod_name", req.NamespacedName.Name, "namespace", req.Namespace, "err", err.Error())
 		// this error could be because of conflict in update. retry with backoff as normal
 		return ctrl.Result{}, err
 	}
+
 	if updateResult.steps != nil && len(updateResult.steps) > 0 {
 		eTag, err := r.storer.UploadNewSteps(updateResult.appName, updateResult.steps)
 		if err != nil {
@@ -115,6 +118,7 @@ func (r *PodReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 		}
 		slog.Info("new steps successfully updated", "etag", eTag)
 	}
+
 	slog.Info("owner successfully updated", "pod_name", req.Name, "namespace", req.Namespace)
 	return ctrl.Result{}, nil
 }
@@ -123,6 +127,14 @@ func (r *PodReconciler) updateOwners(ctx context.Context, groupedDetails map[con
 	var err error
 	var res updateResult
 
+	// okay, yes this for loop looks a bit weird.
+	// map of owners cannot have deployment and daemon set for the same container.
+	// the reason its this way is because in the case of a deployment, a mutating webhook or manual addition of annotation can happen at a deployment, replicaset or pod level.
+	// for a daemonset, it can happen at a daemonset or pod level.
+	// for a stateful set, it can happen at a statefulset or pod level.
+	// basically a pod can be composed into different levels. the container resource limits could be set at any level above and for different containers in a pod, each respective owner needs to get updated.
+	// so how does this looping then ensure groupedDetails does not show up with a container having say deployment and daemonset as owner?
+	// boils down to the configuration. the configuration has sidecars as a map[string]SidecarConfig. SidecarConfig has Owner (not as a slice). So if you try to name the same sidecar as being owned by two different owners, config load will fail and this controller wont start.
 	for owner, details := range groupedDetails {
 		switch owner {
 		case config.Deployment:

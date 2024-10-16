@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -45,9 +46,19 @@ func getStorer() (storer, error) {
 	switch strings.ToLower(storageType) {
 	case "s3":
 		slog.Info("initialising s3 store")
-		return blob.NewS3StepStore()
+		return getS3Storer()
 	default:
 		slog.Info("initialising dummy store..")
 		return blob.DummyStepStore{}, nil
 	}
+}
+
+func getS3Storer() (storer, error) {
+	bucketName := os.Getenv("S3_BUCKET")
+	if bucketName == "" {
+		return nil, errors.New("bucket name not set")
+	}
+
+	awsEndpoint := os.Getenv("AWS_ENDPOINT")
+	return blob.NewS3StepStore(bucketName, awsEndpoint)
 }

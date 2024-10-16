@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"time"
 
 	"github.com/bento01dev/das/internal/config"
@@ -24,18 +23,12 @@ type S3StepStore struct {
 	bucketName string
 }
 
-func NewS3StepStore() (S3StepStore, error) {
+func NewS3StepStore(bucketName, awsEndpoint string) (S3StepStore, error) {
 	var store S3StepStore
 	cfg, err := awsConfig.LoadDefaultConfig(context.Background())
 	if err != nil {
 		return store, err
 	}
-	bucketName := os.Getenv("S3_BUCKET")
-	if bucketName == "" {
-		return store, errors.New("bucket name not set")
-	}
-
-	awsEndpoint := os.Getenv("AWS_ENDPOINT")
 	if awsEndpoint != "" {
 		client := s3.NewFromConfig(cfg, func(o *s3.Options) {
 			o.UsePathStyle = true

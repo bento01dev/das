@@ -16,6 +16,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
+const labelName string = "app.kubernetes.io/name"
+
 type containerDetail struct {
 	sidecarConfig   config.SidecarConfig
 	containerStatus corev1.ContainerStatus
@@ -146,9 +148,10 @@ func (r *PodReconciler) updateDeployment(ctx context.Context, details []containe
 	var replicaSet appsv1.ReplicaSet
 	err = r.Get(ctx, replicaNamespacedName, &replicaSet)
 	if err != nil {
-		slog.Error("error retrieving replica set", "err", err.Error(), "owner_name", replicaNamespacedName.Name, "owner_namespace", replicaNamespacedName.Namespace)
-		return res, fmt.Errorf("error in retrieving replica set as owner of pod: %w", err)
+		slog.Error("failed retrieving replica set", "err", err.Error(), "owner_name", replicaNamespacedName.Name, "owner_namespace", replicaNamespacedName.Namespace)
+		return res, fmt.Errorf("failed in retrieving replica set as owner of pod: %w", err)
 	}
+
 	var deploymentNamespacedName types.NamespacedName
 	for _, owner := range replicaSet.OwnerReferences {
 		if config.Owner(owner.Kind) == config.Deployment {
@@ -156,31 +159,35 @@ func (r *PodReconciler) updateDeployment(ctx context.Context, details []containe
 			break
 		}
 	}
+
 	var deployment appsv1.Deployment
 	err = r.Get(ctx, deploymentNamespacedName, &deployment)
 	if err != nil {
-		slog.Error("error retrieving deployment", "err", err.Error(), "owner_name", deploymentNamespacedName.Name, "owner_namespace", deploymentNamespacedName.Namespace)
-		return res, fmt.Errorf("error in retrieving deployment as owner of pod: %w", err)
+		slog.Error("failed retrieving deployment", "err", err.Error(), "owner_name", deploymentNamespacedName.Name, "owner_namespace", deploymentNamespacedName.Namespace)
+		return res, fmt.Errorf("failed in retrieving deployment as owner of pod: %w", err)
 	}
-	labelName := "app.kubernetes.io/name"
+
+	l := labelName
 	if r.conf.LabelName != "" {
-		labelName = r.conf.LabelName
+		l = r.conf.LabelName
 	}
-	appName := deployment.Labels[labelName]
+	appName := deployment.Labels[l]
+
 	currentOwnerAnnotations := deployment.ObjectMeta.Annotations
 	currentPodAnnotations := deployment.Spec.Template.Annotations
+
 	newAnnotations, err := r.modifier.newAnnotations(details, currentOwnerAnnotations, currentPodAnnotations)
 	if err != nil {
-		slog.Error("error in generating new annotations for deployment", "err", err.Error(), "current_owner_annotations", currentOwnerAnnotations, "current_pod_annotations", currentPodAnnotations)
-		return res, fmt.Errorf("error in updating annotations for %s in %s: %w", deployment.Name, deployment.Namespace, err)
+		slog.Error("failed in generating new annotations for deployment", "err", err.Error(), "current_owner_annotations", currentOwnerAnnotations, "current_pod_annotations", currentPodAnnotations)
+		return res, fmt.Errorf("failed in updating annotations for %s in %s: %w", deployment.Name, deployment.Namespace, err)
 	}
 	deployment.ObjectMeta.Annotations = newAnnotations.ownerAnnotations
 	deployment.Spec.Template.Annotations = newAnnotations.podAnnotations
 
 	err = r.Update(ctx, &deployment)
 	if err != nil {
-		slog.Error("error in updating deployment", "err", err.Error(), "owner_name", deploymentNamespacedName.Name, "owner_namespace", deploymentNamespacedName.Namespace)
-		return res, fmt.Errorf("error updating deployment with the new annotations for %s: %w", deployment.Name, err)
+		slog.Error("failed in updating deployment", "err", err.Error(), "owner_name", deploymentNamespacedName.Name, "owner_namespace", deploymentNamespacedName.Namespace)
+		return res, fmt.Errorf("failed updating deployment with the new annotations for %s: %w", deployment.Name, err)
 	}
 
 	res = updateResult{appName: appName, steps: newAnnotations.steps}

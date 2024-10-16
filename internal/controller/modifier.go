@@ -26,7 +26,7 @@ func NewPodOwnerModifier(conf config.Config) PodOwnerModifier {
 }
 
 func (p PodOwnerModifier) getOwnerDetails(pod *corev1.Pod) map[config.Owner]types.NamespacedName {
-	var res = make(map[config.Owner]types.NamespacedName)
+	res := make(map[config.Owner]types.NamespacedName)
 	for _, ownerRef := range pod.OwnerReferences {
 		var owner config.Owner
 		kind := config.Owner(ownerRef.Kind)
@@ -37,8 +37,7 @@ func (p PodOwnerModifier) getOwnerDetails(pod *corev1.Pod) map[config.Owner]type
 			owner = config.ReplicaSet
 		case config.DaemonSet:
 			owner = config.DaemonSet
-		}
-		if owner == "" {
+		default:
 			slog.Debug("unsupported owner", "owner_type", owner)
 			continue
 		}
@@ -49,10 +48,7 @@ func (p PodOwnerModifier) getOwnerDetails(pod *corev1.Pod) map[config.Owner]type
 
 func (p PodOwnerModifier) getCurrentStep(sidecarConfig config.SidecarConfig, stepName string) config.ResourceStep {
 	i := slices.IndexFunc(sidecarConfig.Steps, func(step config.ResourceStep) bool {
-		if step.Name == stepName {
-			return true
-		}
-		return false
+		return step.Name == stepName
 	})
 
 	if i == -1 {
@@ -110,29 +106,27 @@ func (p PodOwnerModifier) filterTerminated(details []containerDetail) []containe
 func (p PodOwnerModifier) groupByOwner(details []containerDetail) map[config.Owner][]containerDetail {
 	var res = make(map[config.Owner][]containerDetail)
 	for _, detail := range details {
-		mappedDetails := res[detail.sidecarConfig.Owner]
-		mappedDetails = append(mappedDetails, detail)
-		res[detail.sidecarConfig.Owner] = mappedDetails
+		res[detail.sidecarConfig.Owner] = append(res[detail.sidecarConfig.Owner], detail)
 	}
 	return res
 }
 
 func (p PodOwnerModifier) newAnnotations(details []containerDetail, currentOwnerAnnotations map[string]string, currentPodAnnotations map[string]string) (newAnnotations, error) {
-	var res newAnnotations
-	var ownerAnnotations map[string]string
-	var podAnnotations map[string]string
-	var steps map[string]config.ResourceStep = make(map[string]config.ResourceStep)
-	var err error
+	var (
+		res              newAnnotations
+		ownerAnnotations map[string]string
+		podAnnotations   map[string]string
+		steps            map[string]config.ResourceStep = make(map[string]config.ResourceStep)
+		err              error
+	)
 
-	if currentOwnerAnnotations != nil {
-		ownerAnnotations = currentOwnerAnnotations
-	} else {
+	ownerAnnotations = currentOwnerAnnotations
+	if ownerAnnotations == nil {
 		ownerAnnotations = make(map[string]string)
 	}
 
-	if currentPodAnnotations != nil {
-		podAnnotations = currentPodAnnotations
-	} else {
+	podAnnotations = currentPodAnnotations
+	if podAnnotations == nil {
 		podAnnotations = make(map[string]string)
 	}
 
@@ -145,8 +139,7 @@ func (p PodOwnerModifier) newAnnotations(details []containerDetail, currentOwner
 		marshalledDetails, marshallErr := json.Marshal(dasDetails)
 		if err != nil {
 			slog.Error("error marshalling json for das details", "err", marshallErr.Error())
-			err = fmt.Errorf("error marshalling json for %v: %w", dasDetails, marshallErr)
-			return res, err
+			return res, fmt.Errorf("error marshalling json for %v: %w", dasDetails, marshallErr)
 		}
 		ownerAnnotations["das/details"] = string(marshalledDetails)
 		res.ownerAnnotations = ownerAnnotations
